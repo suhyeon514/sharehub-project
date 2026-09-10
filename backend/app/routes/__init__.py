@@ -11,15 +11,16 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # 7개 모델을 Migration이 인식하도록 import
     from app import models  # noqa: F401
 
-    # 인증 API Blueprint 등록
     from app.routes.auth import auth_bp
     app.register_blueprint(auth_bp)
 
     @app.route("/api/health")
     def health():
-        return {"status": "ok", "service": "sharehub-api"}
+        return {
+            "status": "ok",
+            "service": "sharehub-api",
+        }
 
     return app
