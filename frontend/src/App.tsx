@@ -1,15 +1,54 @@
+import { BrowserRouter, Route, Routes } from "react-router-dom"
+
+import ProtectedRoute from "@/components/auth/ProtectedRoute"
+import AppLayout from "@/components/layout/AppLayout"
+
+import DashboardPage from "@/pages/a/DashboardPage"
+import DocumentDetailPage from "@/pages/a/DocumentDetailPage"
+import LoginPage from "@/pages/a/LoginPage"
+import MyDocumentsPage from "@/pages/a/MyDocumentsPage"
+import UploadPage from "@/pages/a/UploadPage"
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <div className="rounded-xl bg-white p-8 shadow-lg">
-        <h1 className="text-3xl font-bold text-green-700">
-          ShareHub
-        </h1>
-        <p className="mt-2 text-gray-600">
-          Tailwind CSS 4 연결 확인
-        </p>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        {/* 로그인 페이지 */}
+        <Route
+          path="/login"
+          element={<LoginPage />}
+        />
+
+        {/* 로그인 필요 */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route
+            path="/"
+            element={<DashboardPage />}
+          />
+
+          <Route
+            path="/documents/mine"
+            element={<MyDocumentsPage />}
+          />
+
+          <Route
+            path="/documents/upload"
+            element={<UploadPage />}
+          />
+
+          <Route
+            path="/documents/:id"
+            element={<DocumentDetailPage />}
+          />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
 
