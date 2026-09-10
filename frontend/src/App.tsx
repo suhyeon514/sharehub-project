@@ -8,6 +8,11 @@ import DocumentDetailPage from "@/pages/a/DocumentDetailPage"
 import LoginPage from "@/pages/a/LoginPage"
 import MyDocumentsPage from "@/pages/a/MyDocumentsPage"
 import UploadPage from "@/pages/a/UploadPage"
+import AdminPage from "@/pages/b/AdminPage"
+import SearchPage from "@/pages/b/SearchPage"
+import SharedDocumentsPage from "@/pages/b/SharedDocumentsPage"
+import SharePage from "@/pages/b/SharePage"
+import TeamDocumentsPage from "@/pages/b/TeamDocumentsPage"
 
 function App() {
   return (
@@ -45,6 +50,31 @@ function App() {
           <Route
             path="/documents/:id"
             element={<DocumentDetailPage />}
+          />
+
+          <Route
+            path="/documents/shared"
+            element={<SharedDocumentsPage />}
+          />
+
+          <Route
+            path="/documents/team"
+            element={<TeamDocumentsPage />}
+          />
+
+          <Route
+            path="/documents/:id/share"
+            element={<SharePage />}
+          />
+
+          <Route
+            path="/search"
+            element={<SearchPage />}
+          />
+
+          <Route
+            path="/admin"
+            element={<AdminPage />}
           />
         </Route>
       </Routes>
