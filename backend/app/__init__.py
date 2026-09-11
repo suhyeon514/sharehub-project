@@ -17,9 +17,11 @@ def create_app():
     # Blueprint 등록
     from app.routes.auth import auth_bp
     from app.routes.documents import documents_bp
+    from app.routes.dashboard import dashboard_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(documents_bp)
+    app.register_blueprint(dashboard_bp)
 
     @app.route("/api/health")
     def health():
