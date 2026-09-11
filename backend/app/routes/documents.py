@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import timezone
 
 from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
@@ -34,6 +35,88 @@ def allowed_file(filename):
 
     extension = filename.rsplit(".", 1)[1].lower()
     return extension in ALLOWED_EXTENSIONS
+
+def to_utc_iso(value):
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def serialize_document_summary(document):
+    return {
+        "id": document.id,
+        "title": document.title,
+        "owner": {
+            "id": document.owner.id,
+            "username": document.owner.username,
+        },
+        "department": (
+            {
+                "id": document.department.id,
+                "name": document.department.name,
+            }
+            if document.department
+            else None
+        ),
+        "visibility": document.visibility,
+        "file_size": document.file_size,
+        "created_at": to_utc_iso(document.created_at),
+        "updated_at": to_utc_iso(document.updated_at),
+    }
+
+
+@documents_bp.route("/mine", methods=["GET"])
+@login_required
+def get_my_documents(current_user, current_session):
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 20, type=int)
+
+    if page is None or page < 1:
+        return jsonify(
+            {
+                "code": "INVALID_PAGE",
+                "message": "page는 1 이상의 정수여야 합니다.",
+            }
+        ), 400
+
+    if page_size is None or page_size < 1 or page_size > 100:
+        return jsonify(
+            {
+                "code": "INVALID_PAGE_SIZE",
+                "message": "page_size는 1 이상 100 이하의 정수여야 합니다.",
+            }
+        ), 400
+
+    query = Document.query.filter_by(
+        owner_id=current_user.id
+    ).order_by(
+        Document.created_at.desc(),
+        Document.id.desc(),
+    )
+
+    pagination = query.paginate(
+        page=page,
+        per_page=page_size,
+        error_out=False,
+    )
+
+    return jsonify(
+        {
+            "data": [
+                serialize_document_summary(document)
+                for document in pagination.items
+            ],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": pagination.total,
+            },
+        }
+    ), 200
 
 
 @documents_bp.route("", methods=["POST"])
