@@ -14,9 +14,12 @@ def create_app():
     # 7개 모델을 Migration이 인식하도록 import
     from app import models  # noqa: F401
 
-    # 인증 API Blueprint 등록
+    # Blueprint 등록
     from app.routes.auth import auth_bp
+    from app.routes.documents import documents_bp
+
     app.register_blueprint(auth_bp)
+    app.register_blueprint(documents_bp)
 
     @app.route("/api/health")
     def health():
