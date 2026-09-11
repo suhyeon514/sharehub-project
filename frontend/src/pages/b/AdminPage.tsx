@@ -1,200 +1,83 @@
-import { Badge } from "@/components/ui/badge"
+import { useEffect, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ApiError, apiGet } from "@/lib/api"
 
-/**
- * 관리자  ·  /admin  ·  User · Document · ActivityLog
- *
- * 운영자가 사용자·문서·로그를 관리하는 화면.
- * - 역할 변경 / 문서 강제 삭제 / 로그 상세 조회
- * - 주의: 관리자 권한 남용·에스컬레이션 취약점의 핵심 화면.
- *         모든 액션은 ActivityLog(action_type=ADMIN_ACTION)에 반드시 기록.
- */
-
-type ManagedUser = {
-  id: number
-  name: string
-  department: string
-  role: "user" | "admin"
-  active: boolean
+type Resource = "users" | "documents" | "activity-logs"
+type Result = { items: Record<string, unknown>[]; pagination: { page: number; pages: number; total: number } }
+const columns: Record<Resource, [string, string][]> = {
+  users: [["username", "계정명"], ["role", "역할"], ["department", "부서"], ["created_at", "가입일"]],
+  documents: [["title", "제목"], ["owner", "소유자"], ["department", "부서"], ["visibility", "공개 범위"], ["updated_at", "수정일"]],
+  "activity-logs": [["username", "작업자"], ["action_type", "이벤트"], ["created_at", "기록 시각"], ["detail", "상세"]],
 }
-
-type ManagedDoc = {
-  id: number
-  filename: string
-  owner: string
-  visibility: "private" | "team" | "shared"
-}
-
-type LogEntry = {
-  id: number
-  at: string
-  user: string
-  action: string
-  target: string
-  ip: string
-}
-
-// TODO: API 연동 시 GET /api/admin/users · /documents · /activity-logs 로 교체
-const MOCK_USERS: ManagedUser[] = [
-  { id: 1, name: "김주원", department: "개발팀", role: "admin", active: true },
-  { id: 2, name: "이수현", department: "개발팀", role: "user", active: true },
-  { id: 3, name: "최민지", department: "인사팀", role: "user", active: true },
-  { id: 4, name: "정하윤", department: "영업팀", role: "user", active: false },
-]
-
-const MOCK_DOCS: ManagedDoc[] = [
-  { id: 201, filename: "서비스 아키텍처 개요.pdf", owner: "김주원", visibility: "team" },
-  { id: 302, filename: "사내 자료공유 정책 개정안.docx", owner: "최민지", visibility: "shared" },
-  { id: 104, filename: "온보딩 체크리스트.docx", owner: "김주원", visibility: "private" },
-]
-
-const MOCK_LOGS: LogEntry[] = [
-  { id: 1, at: "2026-09-10 09:12:04", user: "이수현", action: "LOGIN_SUCCESS", target: "-", ip: "10.0.4.21" },
-  { id: 2, at: "2026-09-10 09:15:33", user: "이수현", action: "DOCUMENT_DOWNLOAD", target: "doc#201", ip: "10.0.4.21" },
-  { id: 3, at: "2026-09-10 09:20:10", user: "정하윤", action: "AUTHORIZATION_DENIED", target: "doc#104", ip: "10.0.7.8" },
-  { id: 4, at: "2026-09-10 09:24:41", user: "김주원", action: "ADMIN_ACTION", target: "user#4 role→user", ip: "10.0.1.2" },
-]
-
-const VISIBILITY_LABEL: Record<ManagedDoc["visibility"], string> = {
-  private: "개인",
-  team: "팀",
-  shared: "공유",
+function display(value: unknown, key: string) {
+  if (value === null || value === undefined) return "—"
+  if (key === "detail") {
+    const detail = value as Record<string, unknown>
+    const operations: Record<string, string> = { create: "공유 생성", update: "권한 변경", delete: "공유 해제" }
+    return [operations[String(detail.operation)], detail.document_id != null ? `문서 #${detail.document_id}` : "",
+      detail.shared_with_id != null ? `수신자 #${detail.shared_with_id}` : "",
+      detail.operation ? `${detail.before_permission ?? "없음"} → ${detail.after_permission ?? "없음"}` : ""].filter(Boolean).join(" · ") || "—"
+  }
+  return String(value).replace("T", " ")
 }
 
 export default function AdminPage() {
-  return (
-    <div>
-      <header className="mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-gray-900">관리자</h1>
-          <code className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 font-mono text-xs text-gray-500">
-            /admin
-          </code>
-        </div>
-        <p className="mt-1.5 max-w-xl text-sm text-gray-500">
-          사용자, 문서, 활동 로그를 관리합니다. admin 역할만 접근할 수 있으며 모든 조치는 감사 로그에 기록됩니다.
-        </p>
-      </header>
-
-      <Tabs defaultValue="users">
-        <TabsList>
-          <TabsTrigger value="users">사용자</TabsTrigger>
-          <TabsTrigger value="documents">문서</TabsTrigger>
-          <TabsTrigger value="logs">활동 로그</TabsTrigger>
-        </TabsList>
-
-        {/* 사용자 */}
-        <TabsContent value="users">
-          <div className="rounded-lg border border-gray-200 bg-white">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>이름</TableHead>
-                  <TableHead className="w-28">부서</TableHead>
-                  <TableHead className="w-24">역할</TableHead>
-                  <TableHead className="w-24">상태</TableHead>
-                  <TableHead className="w-32 text-right">액션</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {MOCK_USERS.map((u) => (
-                  <TableRow key={u.id}>
-                    <TableCell className="font-medium text-gray-900">{u.name}</TableCell>
-                    <TableCell className="text-gray-600">{u.department}</TableCell>
-                    <TableCell>
-                      <Badge variant={u.role === "admin" ? "default" : "outline"}>
-                        {u.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={u.active ? "secondary" : "destructive"}>
-                        {u.active ? "활성" : "비활성"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="outline" size="xs" disabled>
-                        역할 변경
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-
-        {/* 문서 */}
-        <TabsContent value="documents">
-          <div className="rounded-lg border border-gray-200 bg-white">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>파일명</TableHead>
-                  <TableHead className="w-28">소유자</TableHead>
-                  <TableHead className="w-24">공개범위</TableHead>
-                  <TableHead className="w-32 text-right">액션</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {MOCK_DOCS.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell className="font-medium text-gray-900">{d.filename}</TableCell>
-                    <TableCell className="text-gray-600">{d.owner}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{VISIBILITY_LABEL[d.visibility]}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="xs" className="text-red-600" disabled>
-                        강제 삭제
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-
-        {/* 활동 로그 */}
-        <TabsContent value="logs">
-          <div className="rounded-lg border border-gray-200 bg-white">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-44">시각</TableHead>
-                  <TableHead className="w-24">사용자</TableHead>
-                  <TableHead className="w-48">액션</TableHead>
-                  <TableHead>대상</TableHead>
-                  <TableHead className="w-32">IP</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {MOCK_LOGS.map((log) => (
-                  // TODO: 행 클릭 → 로그 상세(detail, request_id) 조회
-                  <TableRow key={log.id} className="cursor-pointer">
-                    <TableCell className="font-mono text-xs text-gray-600">{log.at}</TableCell>
-                    <TableCell className="text-gray-600">{log.user}</TableCell>
-                    <TableCell>
-                      <span className="font-mono text-xs text-gray-700">{log.action}</span>
-                    </TableCell>
-                    <TableCell className="text-gray-600">{log.target}</TableCell>
-                    <TableCell className="font-mono text-xs text-gray-500">{log.ip}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-      </Tabs>
-    </div>
-  )
+  const [params] = useSearchParams()
+  const [attempt, setAttempt] = useState(0)
+  return <AdminContent key={`${params.toString()}:${attempt}`} reload={() => setAttempt((value) => value + 1)} />
+}
+function AdminContent({ reload }: { reload: () => void }) {
+  const [params, setParams] = useSearchParams()
+  const tab = params.get("tab") ?? "users"
+  const resource: Resource = tab === "documents" || tab === "activity-logs" ? tab : "users"
+  const [query, setQuery] = useState(params.get("q") ?? "")
+  const [data, setData] = useState<Result | null>(null)
+  const [error, setError] = useState("")
+  const [forbidden, setForbidden] = useState(false)
+  const navigate = useNavigate()
+  const search = params.toString()
+  useEffect(() => {
+    const controller = new AbortController()
+    // 렌더 전에 서버의 현재 역할 확인. 목록 API도 별도로 관리자 권한 검사.
+    async function load() {
+      const me = await apiGet<{ user: { role: string } }>("/api/auth/me", controller.signal)
+      if (me.user.role !== "admin") throw new ApiError(403, "관리자만 접근할 수 있습니다.")
+      return apiGet<Result>(`/api/admin/${resource}?${search}`, controller.signal)
+    }
+    load().then((result) => { if (!controller.signal.aborted) setData(result) }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      if (reason instanceof ApiError && reason.status === 401) {
+        navigate("/login", { replace: true, state: { from: `/admin?${search}` } })
+      } else {
+        setForbidden(reason instanceof ApiError && reason.status === 403)
+        setError(reason instanceof ApiError ? reason.message : "서버에 연결할 수 없습니다.")
+      }
+    })
+    return () => controller.abort()
+  }, [resource, search, navigate])
+  return <div>
+    <h1 className="mb-2 text-xl font-semibold">관리자</h1>
+    <p className="mb-6 text-sm text-gray-500">사용자, 문서 정보와 기록된 활동을 조회합니다.</p>
+    {forbidden ? <div role="alert"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => navigate("/")}>대시보드로 이동</Button></div> : <>
+      <form className="mb-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); setParams({ tab: resource, q: query.trim(), page: "1" }); reload() }}>
+        <Input className="max-w-sm" aria-label="목록 검색" maxLength={255} placeholder={resource === "users" ? "계정명 검색" : resource === "documents" ? "문서 제목 검색" : "이벤트 검색 (예: DOCUMENT_SHARE)"} value={query} onChange={(event) => setQuery(event.target.value)} />
+        <Button type="submit" variant="outline">검색</Button><Button type="button" variant="ghost" onClick={() => { setParams({ tab: resource }); reload() }}>초기화</Button><Button type="button" variant="outline" onClick={reload}>새로고침</Button>
+      </form>
+      {error ? <div role="alert"><p className="text-red-600">{error}</p><Button variant="outline" onClick={reload}>다시 시도</Button></div> : !data ? <p role="status">조회 중입니다.</p> : <>
+        <p className="mb-3 text-sm">총 {data.pagination.total}건</p>
+        <div className="rounded-lg border bg-white"><Table><TableHeader><TableRow>{columns[resource].map(([key, title]) => <TableHead key={key}>{title}</TableHead>)}</TableRow></TableHeader><TableBody>
+          {data.items.map((item) => <TableRow key={String(item.id)}>{columns[resource].map(([key]) => <TableCell key={key} className="whitespace-normal break-words">{display(item[key], key)}</TableCell>)}</TableRow>)}
+          {!data.items.length && <TableRow><TableCell colSpan={columns[resource].length} className="py-10 text-center">조건에 맞는 기록이 없습니다.</TableCell></TableRow>}
+        </TableBody></Table></div>
+        <nav aria-label="관리자 목록 페이지" className="mt-4 flex items-center justify-end gap-3">
+          <Button variant="outline" disabled={data.pagination.page <= 1} onClick={() => { const next = new URLSearchParams(params); next.set("page", String(data.pagination.page - 1)); setParams(next) }}>이전</Button>
+          <span>{data.pagination.page} / {Math.max(1, data.pagination.pages)} 페이지</span>
+          <Button variant="outline" disabled={data.pagination.page >= data.pagination.pages} onClick={() => { const next = new URLSearchParams(params); next.set("page", String(data.pagination.page + 1)); setParams(next) }}>다음</Button>
+        </nav>
+      </>}
+    </>}
+  </div>
 }

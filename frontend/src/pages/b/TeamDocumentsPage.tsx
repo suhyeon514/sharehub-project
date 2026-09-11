@@ -1,124 +1,95 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ApiError, apiGet } from "@/lib/api"
 
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-
-/**
- * 팀 자료  ·  /documents/team  ·  Department
- *
- * 같은 부서 구성원이 공유하는 자료 목록.
- * - 부서 탭 전환 → 목록 필터링
- * - 주의: 다른 부서 데이터가 탭 전환만으로 노출되면 안 됨.
- *         서버 측에서 부서 소속 검증 필수(URL 파라미터 조작 방어).
- */
-
-type TeamDoc = {
-  id: number
-  title: string
-  owner: string
-  updatedAt: string
+type Result = {
+  department: { id: number; name: string } | null
+  items: { id: number; title: string; owner: { id: number; username: string }; updated_at: string | null }[]
+  pagination: { page: number; per_page: number; total: number; pages: number }
 }
-
-type Department = {
-  id: string
-  name: string
-  documents: TeamDoc[]
-}
-
-// TODO: API 연동 시 GET /api/departments, GET /api/documents/team?department= 로 교체
-const MOCK_DEPARTMENTS: Department[] = [
-  {
-    id: "dev",
-    name: "개발팀",
-    documents: [
-      { id: 201, title: "서비스 아키텍처 개요.pdf", owner: "김주원", updatedAt: "2026-09-07" },
-      { id: 202, title: "배포 절차 문서.md", owner: "이수현", updatedAt: "2026-09-06" },
-      { id: 203, title: "API 명세서 v2.yaml", owner: "박서준", updatedAt: "2026-09-02" },
-    ],
-  },
-  {
-    id: "hr",
-    name: "인사팀",
-    documents: [
-      { id: 211, title: "복지제도 안내.pptx", owner: "최민지", updatedAt: "2026-09-05" },
-      { id: 212, title: "채용 프로세스.docx", owner: "최민지", updatedAt: "2026-08-28" },
-    ],
-  },
-  {
-    id: "sales",
-    name: "영업팀",
-    documents: [
-      { id: 221, title: "3분기 파이프라인.xlsx", owner: "정하윤", updatedAt: "2026-09-08" },
-    ],
-  },
-]
 
 export default function TeamDocumentsPage() {
-  const [activeDept, setActiveDept] = useState(MOCK_DEPARTMENTS[0].id)
+  const [params] = useSearchParams()
+  const [attempt, setAttempt] = useState(0)
+  return <TeamContent key={`${params.toString()}:${attempt}`} onReload={() => setAttempt((value) => value + 1)} />
+}
+
+function TeamContent({ onReload }: { onReload: () => void }) {
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const [query, setQuery] = useState(params.get("q") ?? "")
+  const [result, setResult] = useState<Result | null>(null)
+  const [error, setError] = useState("")
+  const search = params.toString()
+
+  useEffect(() => {
+    const controller = new AbortController()
+    apiGet<Result>(`/api/documents/team?${search}`, controller.signal)
+      .then((data) => { if (!controller.signal.aborted) setResult(data) })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          navigate("/login", { replace: true, state: { from: `/documents/team?${search}` } })
+        } else {
+          setError(reason instanceof ApiError ? reason.message : "서버에 연결할 수 없습니다. 다시 시도해주세요.")
+        }
+      })
+    return () => controller.abort()
+  }, [search, navigate])
+
+  const changePage = (page: number) => {
+    const next = new URLSearchParams(params)
+    next.set("page", String(page))
+    setParams(next)
+  }
 
   return (
     <div>
       <header className="mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-gray-900">팀 자료</h1>
-          <code className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 font-mono text-xs text-gray-500">
-            /documents/team
-          </code>
-        </div>
-        <p className="mt-1.5 max-w-xl text-sm text-gray-500">
-          내가 소속된 부서에서 공유되는 자료입니다. 부서 탭을 눌러 목록을 전환합니다.
-        </p>
+        <h1 className="text-xl font-semibold text-gray-900">팀 자료</h1>
+        <p className="mt-1.5 text-sm text-gray-500">내 부서의 팀 공개 자료입니다. 다른 부서에서 개별 공유받은 자료는 공유받은 자료에서 확인하세요.</p>
       </header>
-
-      <Tabs value={activeDept} onValueChange={(v) => setActiveDept(v as string)}>
-        <TabsList>
-          {MOCK_DEPARTMENTS.map((dept) => (
-            <TabsTrigger key={dept.id} value={dept.id}>
-              {dept.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        {MOCK_DEPARTMENTS.map((dept) => (
-          <TabsContent key={dept.id} value={dept.id}>
-            <div className="rounded-lg border border-gray-200 bg-white">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>제목</TableHead>
-                    <TableHead className="w-32">소유자</TableHead>
-                    <TableHead className="w-32">수정일</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {dept.documents.map((doc) => (
-                    // TODO: 라우팅 연결 후 onClick → navigate(`/documents/${doc.id}`)
-                    <TableRow key={doc.id} className="cursor-pointer">
-                      <TableCell className="font-medium text-gray-900">{doc.title}</TableCell>
-                      <TableCell className="text-gray-600">{doc.owner}</TableCell>
-                      <TableCell className="text-gray-600">{doc.updatedAt}</TableCell>
-                    </TableRow>
-                  ))}
-                  {dept.documents.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-sm text-gray-500">
-                        이 부서에 등록된 자료가 없습니다.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </TabsContent>
-        ))}
-      </Tabs>
+      <form className="mb-4 flex flex-wrap items-center gap-2" onSubmit={(event) => {
+        event.preventDefault()
+        const next = new URLSearchParams()
+        if (query.trim()) next.set("q", query.trim())
+        next.set("page", "1")
+        setParams(next)
+        onReload()
+      }}>
+        <Input aria-label="제목 검색" placeholder="제목 검색" maxLength={255} value={query} onChange={(event) => setQuery(event.target.value)} className="w-full max-w-xs" />
+        <Button type="submit" variant="outline">검색</Button>
+        <Button type="button" variant="ghost" onClick={() => { setParams({}); onReload() }}>초기화</Button>
+        <Button type="button" variant="outline" onClick={onReload}>새로고침</Button>
+      </form>
+      <div aria-live="polite" aria-busy={!result && !error}>
+        {error ? <div role="alert" className="space-y-3 rounded-lg border p-5">
+          <p className="text-red-600">{error}</p><Button variant="outline" onClick={onReload}>다시 시도</Button>
+        </div> : !result ? <p className="py-10 text-center text-gray-500">팀 자료를 불러오는 중입니다.</p> : <>
+          <p className="mb-3 text-sm text-gray-600">{result.department ? `${result.department.name} · 검색 결과 ${result.pagination.total}건` : "소속 부서가 지정되지 않았습니다. 부서 배정은 관리자에게 문의해주세요."}</p>
+          <div className="rounded-lg border border-gray-200 bg-white">
+            <Table>
+              <TableHeader><TableRow><TableHead>제목</TableHead><TableHead>소유자</TableHead><TableHead>수정일</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {result.items.map((item) => <TableRow key={item.id}>
+                  <TableCell><Link className="font-medium text-emerald-800 underline-offset-4 hover:underline focus-visible:underline" to={`/documents/${item.id}`}>{item.title}</Link></TableCell>
+                  <TableCell>{item.owner.username}</TableCell>
+                  <TableCell>{item.updated_at?.slice(0, 10) ?? "—"}</TableCell>
+                </TableRow>)}
+                {result.items.length === 0 && <TableRow><TableCell colSpan={3} className="py-10 text-center text-gray-500">{result.department ? "조건에 맞는 팀 자료가 없습니다." : "부서 배정 후 팀 자료를 확인할 수 있습니다."}</TableCell></TableRow>}
+              </TableBody>
+            </Table>
+          </div>
+          <nav aria-label="팀 자료 페이지" className="mt-4 flex items-center justify-end gap-3">
+            <Button variant="outline" disabled={result.pagination.page <= 1} onClick={() => changePage(result.pagination.page - 1)}>이전</Button>
+            <span className="text-sm">{result.pagination.page} / {Math.max(1, result.pagination.pages)} 페이지</span>
+            <Button variant="outline" disabled={result.pagination.page >= result.pagination.pages} onClick={() => changePage(result.pagination.page + 1)}>다음</Button>
+          </nav>
+        </>}
+      </div>
     </div>
   )
 }

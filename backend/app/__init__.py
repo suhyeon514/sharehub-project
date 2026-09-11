@@ -4,9 +4,11 @@ from app.config import Config
 from app.extensions import db, migrate
 
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+    if test_config is not None:
+        app.config.update(test_config)
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -17,6 +19,21 @@ def create_app():
     # 인증 API Blueprint 등록
     from app.routes.auth import auth_bp
     app.register_blueprint(auth_bp)
+
+    from app.routes.shares import shares_bp
+    app.register_blueprint(shares_bp)
+
+    from app.routes.users import users_bp
+    app.register_blueprint(users_bp)
+
+    from app.routes.document_lists import document_lists_bp
+    app.register_blueprint(document_lists_bp)
+
+    from app.routes.search import search_bp
+    app.register_blueprint(search_bp)
+
+    from app.routes.admin import admin_bp
+    app.register_blueprint(admin_bp)
 
     @app.route("/api/health")
     def health():
