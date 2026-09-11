@@ -68,6 +68,7 @@ def serialize_document_summary(document):
             else None
         ),
         "visibility": document.visibility,
+        "original_filename": document.original_filename,
         "file_size": document.file_size,
         "created_at": to_utc_iso(document.created_at),
         "updated_at": to_utc_iso(document.updated_at),
