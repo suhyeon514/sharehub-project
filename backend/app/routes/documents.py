@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 from app.extensions import db
 from app.models.document import Document
 from app.routes.auth import login_required
+from app.models.document_share import DocumentShare
 
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/api/documents")
@@ -67,6 +68,150 @@ def serialize_document_summary(document):
         "created_at": to_utc_iso(document.created_at),
         "updated_at": to_utc_iso(document.updated_at),
     }
+
+
+
+PERMISSION_LEVELS = {
+    "view": 1,
+    "download": 2,
+    "edit": 3,
+}
+
+
+def get_document_access(document, current_user):
+    # 1. 소유자는 모든 기본 문서 작업 허용
+    if document.owner_id == current_user.id:
+        return {
+            "allowed": True,
+            "source": "owner",
+            "permission": "edit",
+        }
+
+    # 2. 같은 부서의 team 문서는 기본 view 허용
+    if (
+        document.visibility == "team"
+        and document.department_id is not None
+        and current_user.department_id == document.department_id
+    ):
+        team_access = {
+            "allowed": True,
+            "source": "team",
+            "permission": "view",
+        }
+    else:
+        team_access = None
+
+    # 3. 개별 공유 확인
+    share = DocumentShare.query.filter_by(
+        document_id=document.id,
+        shared_with_id=current_user.id,
+    ).first()
+
+    if share is not None:
+        share_permission = share.permission
+
+        if share_permission in PERMISSION_LEVELS:
+            if team_access is None:
+                return {
+                    "allowed": True,
+                    "source": "share",
+                    "permission": share_permission,
+                    "share": share,
+                }
+
+            # 팀 기본 view보다 개별 공유 권한이 높으면 개별 공유 우선
+            if (
+                PERMISSION_LEVELS[share_permission]
+                > PERMISSION_LEVELS[team_access["permission"]]
+            ):
+                return {
+                    "allowed": True,
+                    "source": "share",
+                    "permission": share_permission,
+                    "share": share,
+                }
+
+    if team_access is not None:
+        return team_access
+
+    return {
+        "allowed": False,
+        "source": None,
+        "permission": None,
+    }
+
+
+
+def serialize_document_detail(document, access):
+    return {
+        "id": document.id,
+        "title": document.title,
+        "description": document.description,
+        "owner": {
+            "id": document.owner.id,
+            "username": document.owner.username,
+        },
+        "department": (
+            {
+                "id": document.department.id,
+                "name": document.department.name,
+            }
+            if document.department
+            else None
+        ),
+        "visibility": document.visibility,
+        "original_filename": document.original_filename,
+        "file_size": document.file_size,
+        "content_type": document.content_type,
+        "created_at": to_utc_iso(document.created_at),
+        "updated_at": to_utc_iso(document.updated_at),
+        "access": {
+            "source": access["source"],
+            "permission": access["permission"],
+        },
+    }
+
+@documents_bp.route("/<int:document_id>", methods=["GET"])
+@login_required
+def get_document_detail(
+    document_id,
+    current_user,
+    current_session,
+):
+    document = db.session.get(
+        Document,
+        document_id,
+    )
+
+    if document is None:
+        return jsonify(
+            {
+                "code": "NOT_FOUND",
+                "message": "문서를 찾을 수 없습니다.",
+            }
+        ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "code": "FORBIDDEN",
+                "message": "문서 접근 권한이 없습니다.",
+            }
+        ), 403
+
+    return jsonify(
+        {
+            "data": serialize_document_detail(
+                document,
+                access,
+            )
+        }
+    ), 200
 
 
 @documents_bp.route("/mine", methods=["GET"])
