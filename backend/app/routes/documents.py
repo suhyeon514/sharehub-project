@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
+from app.models.comment import Comment
 from app.models.document import Document
 from app.routes.auth import login_required
 from app.models.document_share import DocumentShare
@@ -179,6 +180,19 @@ def serialize_document_detail(document, access):
             "permission": access["permission"],
         },
     }
+
+
+def serialize_comment(comment):
+    return {
+        "id": comment.id,
+        "content": comment.content,
+        "user": {
+            "id": comment.user.id,
+            "username": comment.user.username,
+        },
+        "created_at": to_utc_iso(comment.created_at),
+    }
+
 
 @documents_bp.route("/<int:document_id>", methods=["GET"])
 @login_required
@@ -437,3 +451,144 @@ def upload_document(current_user, current_session):
         ),
         201,
     )
+
+
+#댓글 목록 조회 API
+@documents_bp.route("/<int:document_id>/comments", methods=["GET"])
+@login_required
+def get_document_comments(
+    document_id,
+    current_user,
+    current_session,
+):
+    document = db.session.get(
+        Document,
+        document_id,
+    )
+
+    if document is None:
+        return jsonify(
+            {
+                "code": "NOT_FOUND",
+                "message": "문서를 찾을 수 없습니다.",
+            }
+        ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not has_document_permission(access, "view"):
+        return jsonify(
+            {
+                "code": "FORBIDDEN",
+                "message": "문서 접근 권한이 없습니다.",
+            }
+        ), 403
+
+    comments = (
+        Comment.query
+        .filter_by(document_id=document.id)
+        .order_by(
+            Comment.created_at.asc(),
+            Comment.id.asc(),
+        )
+        .all()
+    )
+
+    return jsonify(
+        {
+            "data": [
+                serialize_comment(comment)
+                for comment in comments
+            ]
+        }
+    ), 200
+
+#댓글 작성 조회 API
+@documents_bp.route("/<int:document_id>/comments", methods=["POST"])
+@login_required
+def create_document_comment(
+    document_id,
+    current_user,
+    current_session,
+):
+    document = db.session.get(
+        Document,
+        document_id,
+    )
+
+    if document is None:
+        return jsonify(
+            {
+                "code": "NOT_FOUND",
+                "message": "문서를 찾을 수 없습니다.",
+            }
+        ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not has_document_permission(access, "view"):
+        return jsonify(
+            {
+                "code": "FORBIDDEN",
+                "message": "문서 접근 권한이 없습니다.",
+            }
+        ), 403
+
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify(
+            {
+                "code": "INVALID_JSON",
+                "message": "올바른 JSON 객체를 전송해주세요.",
+            }
+        ), 400
+
+    content = data.get("content")
+
+    if not isinstance(content, str):
+        return jsonify(
+            {
+                "code": "INVALID_CONTENT",
+                "message": "댓글 내용은 문자열이어야 합니다.",
+            }
+        ), 400
+
+    content = content.strip()
+
+    if not content:
+        return jsonify(
+            {
+                "code": "EMPTY_CONTENT",
+                "message": "댓글 내용을 입력해주세요.",
+            }
+        ), 400
+
+    if len(content) > 2000:
+        return jsonify(
+            {
+                "code": "CONTENT_TOO_LONG",
+                "message": "댓글은 2000자 이하로 입력해주세요.",
+            }
+        ), 400
+
+    comment = Comment(
+        document_id=document.id,
+        user_id=current_user.id,
+        content=content,
+    )
+
+    db.session.add(comment)
+    db.session.commit()
+
+    return jsonify(
+        {
+            "data": serialize_comment(comment)
+        }
+    ), 201
