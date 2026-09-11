@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import timezone
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
@@ -141,6 +141,15 @@ def get_document_access(document, current_user):
     }
 
 
+def has_document_permission(access, required_permission):
+    if not access["allowed"]:
+        return False
+
+    current_level = PERMISSION_LEVELS.get(access["permission"], 0)
+    required_level = PERMISSION_LEVELS.get(required_permission, 0)
+
+    return current_level >= required_level
+
 
 def serialize_document_detail(document, access):
     return {
@@ -212,6 +221,52 @@ def get_document_detail(
             )
         }
     ), 200
+
+
+@documents_bp.route("/<int:document_id>/download", methods=["GET"])
+@login_required
+def download_document(
+    document_id,
+    current_user,
+    current_session,
+):
+    document = db.session.get(Document, document_id)
+
+    if document is None:
+        return jsonify(
+            {
+                "code": "NOT_FOUND",
+                "message": "문서를 찾을 수 없습니다.",
+            }
+        ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not has_document_permission(access, "download"):
+        return jsonify(
+            {
+                "code": "FORBIDDEN",
+                "message": "문서를 다운로드할 권한이 없습니다.",
+            }
+        ), 403
+
+    if not os.path.isfile(document.file_path):
+        return jsonify(
+            {
+                "code": "FILE_NOT_FOUND",
+                "message": "저장된 파일을 찾을 수 없습니다.",
+            }
+        ), 404
+
+    return send_file(
+        document.file_path,
+        as_attachment=True,
+        download_name=document.original_filename,
+        mimetype=document.content_type,
+    )
 
 
 @documents_bp.route("/mine", methods=["GET"])
