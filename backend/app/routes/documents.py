@@ -28,6 +28,9 @@ ALLOWED_EXTENSIONS = {
     "ppt",
     "pptx",
     "zip",
+    "jpg",
+    "jpeg",
+    "png",
 }
 
 
