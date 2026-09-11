@@ -18,6 +18,8 @@ class Document(db.Model):
 
     title = db.Column(db.String(255), nullable=False)
 
+    description = db.Column(db.Text, nullable=True)
+
     # owner (문서 8번 attribute)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
@@ -26,12 +28,16 @@ class Document(db.Model):
         db.Integer, db.ForeignKey("departments.id"), nullable=True
     )
 
-    # visibility (문서 8번 attribute, Authorization Matrix의 TEAM/Shared 구분 근거)
-    # 예: private / team / shared
+    # 기본 공개 범위
+    # private: 기본적으로 소유자만 접근
+    # team: 같은 부서 사용자 접근
+    # 특정 사용자 공유는 document_shares에서 별도로 처리
     visibility = db.Column(db.String(20), nullable=False, default="private")
 
     # actual file (문서 8번 attribute) - 실제 파일은 디스크/스토리지에 두고 경로만 저장
     file_path = db.Column(db.String(500), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(100), nullable=True)
     file_size = db.Column(db.Integer, nullable=True)
 
     created_at = db.Column(db.DateTime, server_default=db.func.now())

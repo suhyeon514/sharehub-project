@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 
-type Visibility = "private" | "team" | "shared"
+type Visibility = "private" | "team"
 
 export default function UploadPage() {
   const [title, setTitle] = useState("")
@@ -100,9 +100,6 @@ export default function UploadPage() {
                   팀 공개 - 같은 부서 사용자
                 </option>
 
-                <option value="shared">
-                  공유 - 지정한 사용자와 공유
-                </option>
               </select>
             </div>
 

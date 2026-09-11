@@ -14,6 +14,14 @@ from app.extensions import db
 class DocumentShare(db.Model):
     __tablename__ = "document_shares"
 
+    __table_args__ = (
+        db.UniqueConstraint(
+            "document_id",
+            "shared_with_id",
+            name="uq_document_share_target",
+        ),
+    )
+
     id = db.Column(db.Integer, primary_key=True)
 
     document_id = db.Column(
