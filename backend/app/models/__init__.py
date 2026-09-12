@@ -1,5 +1,5 @@
 """
-7개 모델을 한 곳에서 import 해서, Flask-Migrate가
+모델을 한 곳에서 import 해서, Flask-Migrate가
 `flask db migrate` 실행 시 전체 모델을 인식하도록 한다.
 
 문서 STEP 7의 FK 관계 순서를 그대로 따른다:
@@ -16,6 +16,8 @@ from app.models.document import Document
 from app.models.comment import Comment
 from app.models.document_share import DocumentShare
 from app.models.activity_log import ActivityLog
+from app.models.document_block import DocumentBlock
+from app.models.document_unblock_request import DocumentUnblockRequest
 
 __all__ = [
     "Department",
@@ -25,4 +27,6 @@ __all__ = [
     "Comment",
     "DocumentShare",
     "ActivityLog",
+    "DocumentBlock",
+    "DocumentUnblockRequest",
 ]
