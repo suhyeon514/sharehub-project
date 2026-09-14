@@ -14,6 +14,7 @@ type ShareList = {
 }
 type LoadState =
   | { status: "loading" }
+  | { status: "blocked"; message: string }
   | { status: "success"; data: ShareList }
   | { status: "error"; message: string; retryable: boolean }
 
@@ -45,6 +46,10 @@ function ShareContent({ id, onRetry }: { id: string; onRetry: () => void }) {
           navigate("/login", { replace: true, state: { from: `/documents/${id}/share` } })
           return
         }
+        if (error instanceof ApiError && error.code === "DOCUMENT_BLOCKED") {
+          setState({ status: "blocked", message: error.message })
+          return
+        }
         setState({
           status: "error",
           message: error instanceof ApiError ? error.message : "서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.",
@@ -72,6 +77,7 @@ function ShareContent({ id, onRetry }: { id: string; onRetry: () => void }) {
             <ShareCreateForm
               documentId={id}
               shares={state.data.shares}
+              onBlocked={(message) => setState({ status: "blocked", message })}
               onCreated={(share) => setState((current) => current.status === "success"
                 ? { status: "success", data: { ...current.data, shares: [...current.data.shares, share] } }
                 : current)}
@@ -79,9 +85,16 @@ function ShareContent({ id, onRetry }: { id: string; onRetry: () => void }) {
           )}
           <Separator className="my-4" />
           <div aria-live="polite" aria-busy={state.status === "loading"}>
-            <p className="mb-3 text-sm font-semibold text-gray-600">
+            {state.status !== "blocked" && <p className="mb-3 text-sm font-semibold text-gray-600">
               공유 중인 사용자{state.status === "success" ? ` ${state.data.shares.length}명` : ""}
-            </p>
+            </p>}
+            {state.status === "blocked" && (
+              <div role="alert" className="space-y-2 rounded-lg bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-amber-900">공유가 제한된 문서입니다.</p>
+                <p className="text-sm text-amber-900">{state.message}</p>
+                <p className="text-sm text-gray-600">차단 중에는 공유 목록 조회와 공유 추가·권한 변경·해제를 할 수 없습니다.</p>
+              </div>
+            )}
             {state.status === "loading" && <p className="py-4 text-sm text-gray-500">공유 목록을 불러오는 중입니다.</p>}
             {state.status === "error" && (
               <div role="alert" className="space-y-3 py-3">
@@ -94,6 +107,7 @@ function ShareContent({ id, onRetry }: { id: string; onRetry: () => void }) {
               : <ul className="max-h-80 space-y-3 overflow-y-auto">
                 {state.data.shares.map((share) => (
                   <ShareRow key={`${share.id}:${share.permission}`} documentId={id} share={share}
+                    onBlocked={(message) => setState({ status: "blocked", message })}
                     onUpdated={(updated) => setState((current) => current.status === "success"
                       ? { status: "success", data: { ...current.data, shares: current.data.shares.map((item) => item.id === updated.id ? updated : item) } }
                       : current)}
@@ -105,7 +119,7 @@ function ShareContent({ id, onRetry }: { id: string; onRetry: () => void }) {
               </ul>)}
           </div>
           <div className="mt-6 flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={close}>취소</Button>
+            <Button variant="outline" size="sm" onClick={close}>{state.status === "blocked" ? "내 자료로 돌아가기" : "취소"}</Button>
           </div>
         </section>
       </div>

@@ -6,11 +6,12 @@ import { ApiError, apiDelete, apiPatch } from "@/lib/api"
 type Permission = "view" | "download" | "edit"
 type Share = { id: number; shared_with: { id: number; username: string }; permission: Permission }
 
-export default function ShareRow({ documentId, share, onUpdated, onDeleted }: {
+export default function ShareRow({ documentId, share, onUpdated, onDeleted, onBlocked }: {
   documentId: string
   share: Share
   onUpdated: (share: Share) => void
   onDeleted: (id: number) => void
+  onBlocked: (message: string) => void
 }) {
   const navigate = useNavigate()
   const [permission, setPermission] = useState(share.permission)
@@ -36,6 +37,8 @@ export default function ShareRow({ documentId, share, onUpdated, onDeleted }: {
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
         navigate("/login", { replace: true, state: { from: `/documents/${documentId}/share` } })
+      } else if (reason instanceof ApiError && reason.code === "DOCUMENT_BLOCKED") {
+        onBlocked(reason.message)
       } else {
         setError(reason instanceof ApiError
           ? `${reason.message}${reason.status === 404 ? " 목록을 새로고침해주세요." : ""}`

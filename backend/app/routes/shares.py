@@ -5,23 +5,49 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models import ActivityLog, Document, DocumentShare, User
+from app.models import ActivityLog, Document, DocumentBlock, DocumentShare, User
 from app.routes.auth import login_required
-from app.services.document_permissions import can_manage_shares
+from app.services.document_blocks import blocked_response
+from app.services.document_permissions import get_document_access
 
 
 shares_bp = Blueprint("shares", __name__, url_prefix="/api/documents")
 
 
+def share_document_access(document_id, current_user, forbidden_message, *, lock=False):
+    query = db.select(Document).where(Document.id == document_id)
+    if lock:
+        # 관리자 차단 처리도 문서부터 잠가야 공유 변경과 직렬화된다.
+        query = query.with_for_update().execution_options(populate_existing=True)
+    document = db.session.execute(query).scalar_one_or_none()
+    if document is None or not get_document_access(document, current_user)["allowed"]:
+        return None, (jsonify({"error": {
+            "code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다.",
+        }}), 404)
+
+    block_query = db.select(DocumentBlock.id).where(
+        DocumentBlock.document_id == document_id,
+        DocumentBlock.status == "blocked",
+    )
+    if lock:
+        # REPEATABLE READ에서도 인증 조회 시점의 스냅샷이 아닌
+        # 문서 잠금 대기 이후 최신 차단을 확인하는 locking read를 사용한다.
+        block_query = block_query.with_for_update()
+    if db.session.execute(block_query).scalar_one_or_none() is not None:
+        return None, blocked_response()
+    if document.owner_id != current_user.id:
+        return None, (jsonify({"message": forbidden_message}), 403)
+    return document, None
+
+
 @shares_bp.get("/<int:document_id>/shares")
 @login_required
 def list_shares(document_id, current_user, current_session):
-    document = db.session.get(Document, document_id)
-    if document is None:
-        return jsonify({"message": "문서를 찾을 수 없습니다."}), 404
-
-    if not can_manage_shares(current_user, document):
-        return jsonify({"message": "공유 설정을 조회할 권한이 없습니다."}), 403
+    document, error = share_document_access(
+        document_id, current_user, "공유 설정을 조회할 권한이 없습니다.",
+    )
+    if error is not None:
+        return error
 
     shares = db.session.execute(
         db.select(DocumentShare)
@@ -49,11 +75,11 @@ def list_shares(document_id, current_user, current_session):
 @shares_bp.post("/<int:document_id>/shares")
 @login_required
 def create_share(document_id, current_user, current_session):
-    document = db.session.get(Document, document_id)
-    if document is None:
-        return jsonify({"message": "문서를 찾을 수 없습니다."}), 404
-    if not can_manage_shares(current_user, document):
-        return jsonify({"message": "공유를 생성할 권한이 없습니다."}), 403
+    document, error = share_document_access(
+        document_id, current_user, "공유를 생성할 권한이 없습니다.", lock=True,
+    )
+    if error is not None:
+        return error
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -73,7 +99,7 @@ def create_share(document_id, current_user, current_session):
     existing_query = db.select(DocumentShare).where(
         DocumentShare.document_id == document_id,
         DocumentShare.shared_with_id == target_id,
-    )
+    ).with_for_update()
     if db.session.execute(existing_query).scalar_one_or_none() is not None:
         return jsonify({"message": "이미 공유 중인 사용자입니다."}), 409
 
@@ -113,11 +139,11 @@ def create_share(document_id, current_user, current_session):
 @shares_bp.route("/<int:document_id>/shares/<int:share_id>", methods=["PATCH", "DELETE"])
 @login_required
 def change_share(document_id, share_id, current_user, current_session):
-    document = db.session.get(Document, document_id)
-    if document is None:
-        return jsonify({"message": "문서를 찾을 수 없습니다."}), 404
-    if not can_manage_shares(current_user, document):
-        return jsonify({"message": "공유를 관리할 권한이 없습니다."}), 403
+    document, error = share_document_access(
+        document_id, current_user, "공유를 관리할 권한이 없습니다.", lock=True,
+    )
+    if error is not None:
+        return error
 
     # 문서 소속을 함께 제한하고 동시 변경 시 변경 전 권한을 직렬화한다.
     share = db.session.execute(

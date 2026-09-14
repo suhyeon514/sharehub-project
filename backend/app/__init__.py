@@ -41,6 +41,8 @@ def create_app(test_config=None):
 
     from app.routes.admin import admin_bp
     app.register_blueprint(admin_bp)
+    from app.routes.admin_reviews import admin_reviews_bp
+    app.register_blueprint(admin_reviews_bp)
 
     from app.routes.my_document_blocks import (
         my_document_blocks_bp,
