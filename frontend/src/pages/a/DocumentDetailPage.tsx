@@ -330,6 +330,20 @@ export default function DocumentDetailPage() {
       }
 
       if (response.status === 403) {
+        const errorData = await response
+          .json()
+          .catch(() => null)
+
+        if (
+          errorData?.error?.code ===
+          "DOCUMENT_BLOCKED"
+        ) {
+          setErrorMessage(
+            "관리자에 의해 이용이 제한된 문서입니다. 내 자료에서 소명 신청 상태를 확인할 수 있습니다.",
+          )
+          return
+        }
+
         setErrorMessage(
           "이 파일을 다운로드할 권한이 없습니다.",
         )
@@ -438,6 +452,16 @@ export default function DocumentDetailPage() {
       }
 
       if (response.status === 403) {
+        if (
+          data?.error?.code ===
+          "DOCUMENT_BLOCKED"
+        ) {
+          setCommentError(
+            "관리자에 의해 이용이 제한된 문서이므로 댓글을 작성할 수 없습니다.",
+          )
+          return
+        }
+
         setCommentError(
           "댓글을 작성할 권한이 없습니다.",
         )
