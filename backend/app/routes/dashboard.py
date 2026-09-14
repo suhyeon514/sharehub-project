@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify
 from app.services.document_permissions import document_view_condition
+from app.services.document_blocks import document_not_blocked_condition
 
 from app.extensions import db
 from app.models import Document, DocumentShare
@@ -18,20 +19,22 @@ dashboard_bp = Blueprint(
 @login_required
 def get_dashboard(current_user, current_session):
     # 1. 내가 등록한 자료
-    my_documents_count = Document.query.filter_by(
-        owner_id=current_user.id
+    my_documents_count = Document.query.filter(
+        Document.owner_id == current_user.id,
+        document_not_blocked_condition(Document.id),
     ).count()
 
     # 2. 나에게 명시적으로 공유된 자료
     shared_documents_count = (
         db.session.query(DocumentShare.document_id)
-        .filter(
-            DocumentShare.shared_with_id == current_user.id,
-            Document.owner_id != current_user.id,
-        )
         .join(
             Document,
             Document.id == DocumentShare.document_id,
+        )
+        .filter(
+            DocumentShare.shared_with_id == current_user.id,
+            Document.owner_id != current_user.id,
+            document_not_blocked_condition(Document.id),
         )
         .distinct()
         .count()
@@ -43,6 +46,7 @@ def get_dashboard(current_user, current_session):
             Document.visibility == "team",
             Document.department_id == current_user.department_id,
             Document.owner_id != current_user.id,
+            document_not_blocked_condition(Document.id),
         ).count()
     else:
         team_documents_count = 0

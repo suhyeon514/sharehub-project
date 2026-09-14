@@ -12,6 +12,11 @@ from app.routes.auth import login_required
 from app.services.document_permissions import (
     get_document_access, can_view_document, can_download_document,
 )
+from app.services.document_blocks import (
+    document_not_blocked_condition,
+    is_document_blocked,
+    blocked_response,
+)
 
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/api/documents")
@@ -135,8 +140,10 @@ def get_document_detail(
     if document is None:
         return jsonify(
             {
-                "code": "NOT_FOUND",
-                "message": "문서를 찾을 수 없습니다.",
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
             }
         ), 404
 
@@ -145,11 +152,27 @@ def get_document_detail(
         current_user,
     )
 
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    if is_document_blocked(document.id):
+        return blocked_response()
+
     if not can_view_document(current_user, document):
         return jsonify(
             {
-                "code": "FORBIDDEN",
-                "message": "문서 접근 권한이 없습니다.",
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "문서 접근 권한이 없습니다.",
+                }
             }
         ), 403
 
@@ -175,24 +198,48 @@ def download_document(
     if document is None:
         return jsonify(
             {
-                "code": "NOT_FOUND",
-                "message": "문서를 찾을 수 없습니다.",
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
             }
         ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    if is_document_blocked(document.id):
+        return blocked_response()
 
     if not can_download_document(current_user, document):
         return jsonify(
             {
-                "code": "FORBIDDEN",
-                "message": "문서를 다운로드할 권한이 없습니다.",
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "문서를 다운로드할 권한이 없습니다.",
+                }
             }
         ), 403
 
     if not os.path.isfile(document.file_path):
         return jsonify(
             {
-                "code": "FILE_NOT_FOUND",
-                "message": "저장된 파일을 찾을 수 없습니다.",
+                "error": {
+                    "code": "FILE_NOT_FOUND",
+                    "message": "저장된 파일을 찾을 수 없습니다.",
+                }
             }
         ), 404
 
@@ -202,7 +249,6 @@ def download_document(
         download_name=document.original_filename,
         mimetype=document.content_type,
     )
-
 
 @documents_bp.route("/mine", methods=["GET"])
 @login_required
@@ -226,8 +272,9 @@ def get_my_documents(current_user, current_session):
             }
         ), 400
 
-    query = Document.query.filter_by(
-        owner_id=current_user.id
+    query = Document.query.filter(
+        Document.owner_id == current_user.id,
+        document_not_blocked_condition(Document.id),
     ).order_by(
         Document.created_at.desc(),
         Document.id.desc(),
@@ -390,16 +437,38 @@ def get_document_comments(
     if document is None:
         return jsonify(
             {
-                "code": "NOT_FOUND",
-                "message": "문서를 찾을 수 없습니다.",
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
             }
         ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    if is_document_blocked(document.id):
+        return blocked_response()
 
     if not can_view_document(current_user, document):
         return jsonify(
             {
-                "code": "FORBIDDEN",
-                "message": "문서 접근 권한이 없습니다.",
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "문서 접근 권한이 없습니다.",
+                }
             }
         ), 403
 
@@ -438,16 +507,38 @@ def create_document_comment(
     if document is None:
         return jsonify(
             {
-                "code": "NOT_FOUND",
-                "message": "문서를 찾을 수 없습니다.",
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
             }
         ), 404
+
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    if is_document_blocked(document.id):
+        return blocked_response()
 
     if not can_view_document(current_user, document):
         return jsonify(
             {
-                "code": "FORBIDDEN",
-                "message": "문서 접근 권한이 없습니다.",
+                "error": {
+                    "code": "FORBIDDEN",
+                    "message": "문서 접근 권한이 없습니다.",
+                }
             }
         ), 403
 

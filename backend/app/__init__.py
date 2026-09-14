@@ -1,3 +1,5 @@
+from pprint import pp
+
 from flask import Flask
 
 from app.config import Config
@@ -39,6 +41,13 @@ def create_app(test_config=None):
 
     from app.routes.admin import admin_bp
     app.register_blueprint(admin_bp)
+
+    from app.routes.my_document_blocks import (
+        my_document_blocks_bp,
+        document_block_requests_bp,
+    )
+    app.register_blueprint(my_document_blocks_bp)
+    app.register_blueprint(document_block_requests_bp)
 
     @app.route("/api/health")
     def health():

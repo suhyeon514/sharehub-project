@@ -1,11 +1,20 @@
 """Run with: python -m unittest discover -s tests -v"""
 import secrets
+from subprocess import call
 import unittest
 from datetime import datetime, timedelta, timezone
 
 from app import create_app
 from app.extensions import db
-from app.models import Department, Document, DocumentShare, Session, User
+from app.models import (
+    Department,
+    Document,
+    DocumentShare,
+    Session,
+    User,
+    DocumentBlock,
+    DocumentUnblockRequest,
+)
 from app.services.document_permissions import can_manage_shares
 
 
@@ -72,6 +81,317 @@ class ShareListTests(unittest.TestCase):
         return self.client.get(
             f"/api/documents/{document_id}/shares",
             headers=headers, query_string=query_string,
+        )
+
+    def test_owner_blocked_document_list_and_detail(self):
+        with self.app.app_context():
+            block = DocumentBlock(
+                document_id=self.document_id,
+                document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"],
+                block_reason="민감정보 포함",
+                block_basis="internal-policy-secret",
+                status="blocked",
+            )
+            db.session.add(block)
+            db.session.commit()
+            block_id = block.id
+
+        headers = {
+            "Authorization": f"Bearer {self.tokens['owner']}"
+        }
+
+        response = self.client.get(
+            "/api/my/blocked-documents",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.get_json()
+
+        self.assertEqual(len(data["data"]), 1)
+
+        item = data["data"][0]
+
+        self.assertEqual(item["document_id"], self.document_id)
+        self.assertEqual(item["block_id"], block_id)
+        self.assertEqual(item["status"], "blocked")
+        self.assertEqual(item["block_reason"], "민감정보 포함")
+        self.assertIsNone(item["unblock_request"])
+
+        # block_basis는 owner 응답에 절대 노출되면 안 됨
+        self.assertNotIn("block_basis", item)
+        self.assertNotIn(
+            "internal-policy-secret",
+            str(data),
+        )
+
+        detail = self.client.get(
+            f"/api/my/document-blocks/{block_id}",
+            headers=headers,
+        )
+
+        self.assertEqual(detail.status_code, 200)
+
+        detail_data = detail.get_json()["data"]
+
+        self.assertEqual(detail_data["block_id"], block_id)
+        self.assertNotIn("block_basis", detail_data)
+
+
+    def test_block_detail_rejects_non_owner(self):
+        with self.app.app_context():
+            block = DocumentBlock(
+                document_id=self.document_id,
+                document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"],
+                block_reason="차단 테스트",
+                block_basis="secret",
+                status="blocked",
+            )
+            db.session.add(block)
+            db.session.commit()
+            block_id = block.id
+
+        for user in (
+            "admin",
+            "viewer",
+            "editor",
+            "unrelated",
+            "no_dept",
+        ):
+            with self.subTest(user=user):
+                response = self.client.get(
+                    f"/api/my/document-blocks/{block_id}",
+                    headers={
+                        "Authorization": f"Bearer {self.tokens[user]}"
+                    },
+                )
+
+                self.assertEqual(response.status_code, 404)
+
+                payload = response.get_json()
+
+                self.assertEqual(
+                    payload["error"]["code"],
+                    "DOCUMENT_BLOCK_NOT_FOUND",
+                )
+
+
+    def test_owner_can_create_unblock_request_and_duplicate_is_rejected(self):
+        with self.app.app_context():
+            block = DocumentBlock(
+                document_id=self.document_id,
+                document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"],
+                block_reason="차단 테스트",
+                block_basis="secret",
+                status="blocked",
+            )
+            db.session.add(block)
+            db.session.commit()
+            block_id = block.id
+
+        headers = {
+            "Authorization": f"Bearer {self.tokens['owner']}"
+        }
+
+        response = self.client.post(
+            f"/api/document-blocks/{block_id}/unblock-requests",
+            headers=headers,
+            json={
+                "reason": "문서를 수정했으니 재검토 부탁드립니다."
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        payload = response.get_json()["data"]
+
+        self.assertEqual(payload["block_id"], block_id)
+        self.assertEqual(payload["status"], "pending")
+
+        with self.app.app_context():
+            request_row = db.session.execute(
+                db.select(DocumentUnblockRequest).where(
+                    DocumentUnblockRequest.block_id == block_id
+                )
+            ).scalar_one()
+
+            self.assertEqual(
+                request_row.requester_id,
+                self.user_ids["owner"],
+            )
+
+            self.assertEqual(
+                request_row.request_reason,
+                "문서를 수정했으니 재검토 부탁드립니다.",
+            )
+
+            self.assertEqual(
+                request_row.status,
+                "pending",
+            )
+
+        duplicate = self.client.post(
+            f"/api/document-blocks/{block_id}/unblock-requests",
+            headers=headers,
+            json={
+                "reason": "다시 요청합니다."
+            },
+        )
+
+        self.assertEqual(
+            duplicate.status_code,
+            409,
+        )
+
+        self.assertEqual(
+            duplicate.get_json()["error"]["code"],
+            "UNBLOCK_REQUEST_ALREADY_PENDING",
+        )
+
+
+    def test_unblock_request_validation_and_inactive_block(self):
+        with self.app.app_context():
+            block = DocumentBlock(
+                document_id=self.document_id,
+                document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"],
+                block_reason="차단 테스트",
+                block_basis="secret",
+                status="blocked",
+            )
+            db.session.add(block)
+            db.session.commit()
+            block_id = block.id
+
+        owner_headers = {
+            "Authorization": f"Bearer {self.tokens['owner']}"
+        }
+
+        # 빈 reason
+        response = self.client.post(
+            f"/api/document-blocks/{block_id}/unblock-requests",
+            headers=owner_headers,
+            json={
+                "reason": "   "
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "EMPTY_REASON",
+        )
+
+        # 비소유자는 block 존재 자체를 노출하지 않음
+        response = self.client.post(
+            f"/api/document-blocks/{block_id}/unblock-requests",
+            headers={
+                "Authorization": f"Bearer {self.tokens['viewer']}"
+            },
+            json={
+                "reason": "내 요청"
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "DOCUMENT_BLOCK_NOT_FOUND",
+        )
+
+        # 이미 해제된 차단
+        with self.app.app_context():
+            block = db.session.get(
+                DocumentBlock,
+                block_id,
+            )
+
+            block.status = "unblocked"
+            block.unblocked_by_id = self.user_ids["admin"]
+            block.unblocked_at = datetime.now(timezone.utc)
+            block.unblock_reason = "관리자 해제"
+            db.session.commit()
+
+        response = self.client.post(
+            f"/api/document-blocks/{block_id}/unblock-requests",
+            headers=owner_headers,
+            json={
+                "reason": "다시 검토"
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "DOCUMENT_BLOCK_NOT_ACTIVE",
+        )
+
+    def test_block_detail_returns_latest_unblock_request(self):
+        with self.app.app_context():
+            block = DocumentBlock(
+                document_id=self.document_id,
+                document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"],
+                block_reason="차단 테스트",
+                block_basis="secret",
+                status="blocked",
+            )
+            db.session.add(block)
+            db.session.flush()
+
+            older = DocumentUnblockRequest(
+                block_id=block.id,
+                requester_id=self.user_ids["owner"],
+                request_reason="첫 번째 요청",
+                status="cancelled",
+                cancelled_at=datetime.now(timezone.utc),
+            )
+
+            newer = DocumentUnblockRequest(
+                block_id=block.id,
+                requester_id=self.user_ids["owner"],
+                request_reason="두 번째 요청",
+                status="pending",
+            )
+
+            db.session.add_all([older, newer])
+            db.session.commit()
+
+            block_id = block.id
+            newer_id = newer.id
+
+        response = self.client.get(
+            f"/api/my/document-blocks/{block_id}",
+            headers={
+                "Authorization": f"Bearer {self.tokens['owner']}"
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.get_json()["data"]
+
+        self.assertIsNotNone(payload["unblock_request"])
+
+        self.assertEqual(
+            payload["unblock_request"]["id"],
+            newer_id,
+        )
+
+        self.assertEqual(
+            payload["unblock_request"]["status"],
+            "pending",
+        )
+
+        self.assertIsNone(
+            payload["unblock_request"]["review_comment"],
         )
 
     def test_owner_receives_only_contract_fields(self):
@@ -567,18 +887,56 @@ class ShareListTests(unittest.TestCase):
                 return self.client.open(f"/api/documents/{self.document_id}{suffix}", method=method,
                     headers={"Authorization": f"Bearer {self.tokens[user]}"},
                     json={"content": "comment"} if method == "POST" else None)
-            for user, view, download in (("owner", True, True), ("viewer", True, False), ("editor", True, True), ("admin", False, False), ("unrelated", False, False), ("no_dept", False, False)):
-                self.assertEqual(call(user).status_code, 200 if view else 403)
-                self.assertEqual(call(user, "/comments").status_code, 200 if view else 403)
-                self.assertEqual(call(user, "/comments", "POST").status_code, 201 if view else 403)
+            for user, view, download in (
+                ("owner", True, True),
+                ("viewer", True, False),
+                ("editor", True, True),
+                ("admin", False, False),
+                ("unrelated", False, False),
+                ("no_dept", False, False),
+            ):
+                expected_view_status = 200 if view else 404
+                expected_comment_post_status = 201 if view else 404
+
+                self.assertEqual(
+                    call(user).status_code,
+                    expected_view_status,
+                )
+
+                self.assertEqual(
+                    call(user, "/comments").status_code,
+                    expected_view_status,
+                )
+
+                self.assertEqual(
+                    call(user, "/comments", "POST").status_code,
+                    expected_comment_post_status,
+                )
+
                 response = call(user, "/download")
-                self.assertEqual(response.status_code, 200 if download else 403)
+
+                if download:
+                    expected_download_status = 200
+                elif view:
+                    expected_download_status = 403
+                else:
+                    expected_download_status = 404
+
+                self.assertEqual(
+                    response.status_code,
+                    expected_download_status,
+                )
+
+                if download:
+                    self.assertEqual(response.data, b"fixture")
+
+                response.close()
                 if download: self.assertEqual(response.data, b"fixture")
                 response.close()
             share_id = self.get_list().get_json()["shares"][0]["id"]
             self.mutate_share("DELETE", share_id=share_id)
-            self.assertEqual(call("viewer", "/comments").status_code, 403)
-            self.assertEqual(call("viewer", "/comments", "POST").status_code, 403)
+            self.assertEqual(call("viewer", "/comments").status_code, 404)
+            self.assertEqual(call("viewer", "/comments", "POST").status_code, 404)
             with self.app.app_context():
                 self.assertEqual(db.session.query(Comment).count(), 3)
                 document = db.session.get(Document, self.document_id)
