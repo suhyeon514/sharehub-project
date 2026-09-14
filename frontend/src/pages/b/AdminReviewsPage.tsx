@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import AdminModal from "@/components/admin/AdminModal"
 import { ApiError, apiGet, apiPost } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -112,7 +113,7 @@ function Reviews() {
         <Button type="button" variant="outline" disabled={busy} onClick={refresh}>새로고침</Button>
       </form>
       {params.get("block_id") && <p className="mb-3 text-sm">차단 #{params.get("block_id")}의 요청 이력</p>}
-      {notice && <p role="status" className="mb-3 text-sm text-emerald-700">{notice}</p>}
+      {notice && !selected && <p role="status" className="mb-3 text-sm text-emerald-700">{notice}</p>}
       {error ? <p role="alert" className="text-red-600">{error}</p> : !list ? <p role="status">조회 중입니다.</p> : <>
         <p className="mb-3 text-sm">총 {list.pagination.total}건</p>
         <ul className="space-y-2">{list.items.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-4">
@@ -126,8 +127,8 @@ function Reviews() {
           <Button variant="outline" disabled={busy || list.pagination.page >= list.pagination.pages} onClick={() => change({ page: String(list.pagination.page + 1) })}>다음</Button>
         </nav>
       </>}
-      {selected && <section aria-label="소명 상세" className="mt-5 space-y-4 rounded-xl border bg-white p-5">
-        <div className="flex justify-between"><h2 className="font-semibold">소명 상세</h2><Button variant="ghost" disabled={busy} onClick={() => { setSelected(""); setDetail(null) }}>닫기</Button></div>
+      {selected && <AdminModal title="소명 상세·심사" busy={busy} onClose={() => { setSelected(""); setDetail(null); setDetailError(""); setComment("") }}>
+        {notice && <p role="status" className="text-sm text-emerald-700">{notice}</p>}
         {detailError && <p role="alert" className="text-red-600">{detailError}</p>}
         {!detail ? !detailError && <p role="status">상세 조회 중입니다.</p> : <>
           <p className="font-medium">{detail.document.title} · 차단 #{detail.block.id}</p>
@@ -142,7 +143,7 @@ function Reviews() {
             <div className="mt-3 flex gap-2"><Button disabled={busy || length < 1 || length > 1000} onClick={() => void review("approved")}>승인</Button><Button variant="destructive" disabled={busy || length < 1 || length > 1000} onClick={() => void review("rejected")}>거절</Button>{busy && <span role="status">처리 중…</span>}</div>
           </div>}
         </>}
-      </section>}
+      </AdminModal>}
     </>}
   </div>
 }

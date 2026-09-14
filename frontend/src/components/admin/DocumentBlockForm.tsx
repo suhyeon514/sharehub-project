@@ -1,4 +1,5 @@
 import { useRef, useState } from "react"
+import AdminModal from "@/components/admin/AdminModal"
 import { Button } from "@/components/ui/button"
 import { ApiError, apiPost } from "@/lib/api"
 
@@ -42,7 +43,7 @@ export default function DocumentBlockForm({ document, onDone, onCancel, onAuthEr
     }
   }
 
-  return <section aria-labelledby="block-form-title" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-5">
+  return <AdminModal title="문서 차단" busy={busy} onClose={onCancel}>
     <h2 id="block-form-title" className="font-semibold">문서 차단: {document.title} (#{document.id})</h2>
     <p className="mt-2 text-sm text-gray-700">차단하면 소유자를 포함한 모든 사용자의 일반 문서 이용과 공유 관리가 중지됩니다. 원본과 기존 기록은 보존됩니다.</p>
     <form className="mt-4 space-y-4" aria-busy={busy} onSubmit={(event) => { event.preventDefault(); void submit() }}>
@@ -66,5 +67,5 @@ export default function DocumentBlockForm({ document, onDone, onCancel, onAuthEr
         <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>취소</Button>
       </div>
     </form>
-  </section>
+  </AdminModal>
 }
