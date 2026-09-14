@@ -60,7 +60,7 @@ export default function Header() {
     displayName.charAt(0).toUpperCase()
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
       {/* 검색 영역 */}
       <div className="w-full max-w-md">
         <div className="relative">

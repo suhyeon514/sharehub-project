@@ -20,7 +20,7 @@ export default function Sidebar() {
   let isAdmin = false
   try { isAdmin = JSON.parse(localStorage.getItem("sharehub_user") ?? "null")?.role === "admin" } catch { /* 메뉴 표시용이며 API에서 최종 검사한다. */ }
   return (
-    <aside className="flex h-screen w-64 shrink-0 flex-col bg-[#0F6E56] px-4 py-6 text-white">
+    <aside className="flex h-full w-64 shrink-0 flex-col bg-[#0F6E56] px-4 py-6 text-white">
       <div className="mb-8 px-2">
         <h1 className="text-2xl font-bold">ShareHub</h1>
         <p className="mt-1 text-sm text-white/70">

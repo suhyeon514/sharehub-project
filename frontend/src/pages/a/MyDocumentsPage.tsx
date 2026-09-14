@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { createPortal } from "react-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -163,6 +164,28 @@ export default function MyDocumentsPage() {
     useState(false)
   const [appealMessage, setAppealMessage] = useState("")
 
+  useEffect(() => {
+    if (!selectedBlock) {
+      return
+    }
+
+    const previousOverflow = document.body.style.overflow
+    const previousPaddingRight = document.body.style.paddingRight
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth
+
+    document.body.style.overflow = "hidden"
+
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.body.style.paddingRight = previousPaddingRight
+    }
+  }, [selectedBlock])
+
   const fetchBlockedDocuments = async () => {
     const token = localStorage.getItem("sharehub_token")
 
@@ -172,6 +195,7 @@ export default function MyDocumentsPage() {
     }
 
     try {
+      setBlockedLoading(true)
 
       const response = await fetch(
         "/api/my/blocked-documents",
@@ -278,89 +302,77 @@ export default function MyDocumentsPage() {
   }, [navigate])
 
   useEffect(() => {
-  let cancelled = false
+    let cancelled = false
 
-  const loadBlockedDocuments = async () => {
-    const token =
-      localStorage.getItem("sharehub_token")
+    const loadBlockedDocuments = async () => {
+      const token = localStorage.getItem("sharehub_token")
 
-    if (!token) {
-      navigate("/login")
-      return
-    }
-
-    try {
-      const response = await fetch(
-        "/api/my/blocked-documents",
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      )
-
-      if (cancelled) {
-        return
-      }
-
-      if (response.status === 401) {
-        clearAuth()
+      if (!token) {
         navigate("/login")
         return
       }
 
-      const data:
-        | BlockedDocumentsResponse
-        | ApiErrorResponse
-        | null = await response
-        .json()
-        .catch(() => null)
-
-      if (cancelled) {
-        return
-      }
-
-      if (!response.ok) {
-        const errorData =
-          data as ApiErrorResponse | null
-
-        setAppealMessage(
-          errorData?.error?.message ??
-            "이용 제한 자료를 불러오지 못했습니다.",
+      try {
+        const response = await fetch(
+          "/api/my/blocked-documents",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
         )
-        return
-      }
 
-      setBlockedDocuments(
-        (data as BlockedDocumentsResponse).data ??
-          [],
-      )
-    } catch (error) {
-      if (cancelled) {
-        return
-      }
+        if (cancelled) return
 
-      console.error(
-        "failed to load blocked documents:",
-        error,
-      )
+        if (response.status === 401) {
+          clearAuth()
+          navigate("/login")
+          return
+        }
 
-      setAppealMessage(
-        "이용 제한 자료를 불러오지 못했습니다.",
-      )
-    } finally {
-      if (!cancelled) {
-        setBlockedLoading(false)
+        const data:
+          | BlockedDocumentsResponse
+          | ApiErrorResponse
+          | null = await response.json().catch(() => null)
+
+        if (cancelled) return
+
+        if (!response.ok) {
+          const errorData = data as ApiErrorResponse | null
+
+          setAppealMessage(
+            errorData?.error?.message ??
+              "이용 제한 자료를 불러오지 못했습니다.",
+          )
+          return
+        }
+
+        setBlockedDocuments(
+          (data as BlockedDocumentsResponse).data ?? [],
+        )
+      } catch (error) {
+        if (cancelled) return
+
+        console.error(
+          "failed to load blocked documents:",
+          error,
+        )
+        setAppealMessage(
+          "이용 제한 자료를 불러오지 못했습니다.",
+        )
+      } finally {
+        if (!cancelled) {
+          setBlockedLoading(false)
+        }
       }
     }
-  }
 
-  void loadBlockedDocuments()
+    void loadBlockedDocuments()
 
-  return () => {
-    cancelled = true
-  }
-}, [navigate])
+    return () => {
+      cancelled = true
+    }
+  }, [navigate])
 
   const submitAppeal = async () => {
     if (!selectedBlock) {
@@ -573,7 +585,7 @@ export default function MyDocumentsPage() {
         </CardHeader>
 
         <CardContent className="pt-6">
-          {appealMessage && (
+          {appealMessage && !selectedBlock && (
             <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
               <p className="text-sm text-gray-700">
                 {appealMessage}
@@ -803,94 +815,158 @@ export default function MyDocumentsPage() {
         </CardContent>
       </Card>
 
-      {/* 소명 신청 */}
-      {selectedBlock && (
-        <Card className="border-[#0F6E56]/20">
-          <CardHeader>
-            <CardTitle className="text-lg">
+     {/* 소명 신청 모달 */}
+{selectedBlock &&
+  createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-6"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (
+          event.target === event.currentTarget &&
+          !appealSubmitting
+        ) {
+          setSelectedBlock(null)
+          setAppealReason("")
+          setAppealMessage("")
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="appeal-modal-title"
+        className="w-full max-w-2xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5">
+          <div>
+            <h3
+              id="appeal-modal-title"
+              className="text-xl font-bold text-gray-900"
+            >
               소명 신청
-            </CardTitle>
+            </h3>
 
-            <p className="text-sm text-gray-500">
-              이용 제한에 대해 관리자가 검토할 수 있도록
-              소명 내용을 작성해주세요.
+            <p className="mt-1 text-sm text-gray-500">
+              이용 제한 해제를 요청할 내용을 작성해주세요.
             </p>
-          </CardHeader>
+          </div>
 
-          <CardContent className="space-y-4">
-            <div className="rounded-lg bg-gray-50 px-4 py-3">
-              <p className="text-xs font-medium text-gray-500">
-                대상 자료
-              </p>
+          <button
+            type="button"
+            aria-label="소명 신청 창 닫기"
+            disabled={appealSubmitting}
+            onClick={() => {
+              setSelectedBlock(null)
+              setAppealReason("")
+              setAppealMessage("")
+            }}
+            className="rounded-md px-2 py-1 text-xl leading-none text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
 
-              <p className="mt-1 text-sm font-semibold text-gray-900">
-                {selectedBlock.title}
-              </p>
+        <div className="max-h-[75vh] space-y-5 overflow-y-auto px-6 py-5">
+          <div className="rounded-xl bg-gray-50 px-4 py-4">
+            <p className="text-xs font-medium text-gray-500">
+              대상 자료
+            </p>
 
-              <p className="mt-3 text-xs font-medium text-gray-500">
-                제한 사유
-              </p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              {selectedBlock.title}
+            </p>
 
-              <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">
-                {selectedBlock.block_reason}
-              </p>
-            </div>
+            <p className="mt-4 text-xs font-medium text-gray-500">
+              제한 사유
+            </p>
 
-            <div>
-              <label
-                htmlFor="appeal-reason"
-                className="mb-2 block text-sm font-medium text-gray-800"
-              >
-                소명 내용
-              </label>
+            <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+              {selectedBlock.block_reason ||
+                "차단 사유가 제공되지 않았습니다."}
+            </p>
+          </div>
 
-              <textarea
-                id="appeal-reason"
-                value={appealReason}
-                onChange={(event) =>
-                  setAppealReason(event.target.value)
-                }
-                rows={5}
-                disabled={appealSubmitting}
-                placeholder="이용 제한 해제가 필요한 사유를 입력해주세요."
-                className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm leading-6 outline-none transition placeholder:text-gray-400 focus:border-[#0F6E56] focus:ring-2 focus:ring-[#0F6E56]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
-              />
-            </div>
+          <div>
+            <label
+              htmlFor="appeal-reason"
+              className="mb-2 block text-sm font-medium text-gray-800"
+            >
+              소명 내용
+            </label>
 
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={appealSubmitting}
-                onClick={() => {
-                  setSelectedBlock(null)
-                  setAppealReason("")
+            <textarea
+              id="appeal-reason"
+              value={appealReason}
+              onChange={(event) => {
+                setAppealReason(event.target.value)
+
+                if (appealMessage) {
                   setAppealMessage("")
-                }}
-              >
-                취소
-              </Button>
-
-              <Button
-                type="button"
-                disabled={
-                  appealSubmitting ||
-                  !appealReason.trim()
                 }
-                onClick={submitAppeal}
-                className="bg-[#0F6E56] text-white hover:bg-[#0C5B47]"
-              >
-                {appealSubmitting
-                  ? "제출 중..."
-                  : selectedBlock.unblock_request
-                        ?.status === "rejected"
-                    ? "다시 소명 요청"
-                    : "소명 요청 제출"}
-              </Button>
+              }}
+              rows={6}
+              autoFocus
+              disabled={appealSubmitting}
+              placeholder="이용 제한 해제가 필요한 사유를 입력해주세요."
+              className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm leading-6 outline-none transition placeholder:text-gray-400 focus:border-[#0F6E56] focus:ring-2 focus:ring-[#0F6E56]/10 disabled:cursor-not-allowed disabled:bg-gray-50"
+            />
+
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-xs text-gray-400">
+                관리자 검토에 필요한 내용을 구체적으로 작성해주세요.
+              </p>
+
+              <span className="shrink-0 text-xs text-gray-400">
+                {appealReason.trim().length}자
+              </span>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+
+          {appealMessage && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+              <p className="text-sm text-red-700">
+                {appealMessage}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50/60 px-6 py-4">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={appealSubmitting}
+            onClick={() => {
+              setSelectedBlock(null)
+              setAppealReason("")
+              setAppealMessage("")
+            }}
+          >
+            취소
+          </Button>
+
+          <Button
+            type="button"
+            disabled={
+              appealSubmitting || !appealReason.trim()
+            }
+            onClick={submitAppeal}
+            className="bg-[#0F6E56] text-white hover:bg-[#0C5B47]"
+          >
+            {appealSubmitting
+              ? "제출 중..."
+              : selectedBlock.unblock_request?.status ===
+                    "rejected"
+                ? "다시 소명 요청"
+                : "소명 요청 제출"}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )}
 
       {/* 자료 목록 */}
       <Card>
