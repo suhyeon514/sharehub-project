@@ -16,7 +16,7 @@ export default function Sidebar() {
   const inAdmin = location.pathname === "/admin"
   const [adminExpanded, setAdminExpanded] = useState(inAdmin)
   const tab = new URLSearchParams(location.search).get("tab")
-  const activeTab = tab === "documents" || tab === "activity-logs" ? tab : "users"
+  const activeTab = tab === "documents" || tab === "activity-logs" || tab === "unblock-requests" ? tab : "users"
   let isAdmin = false
   try { isAdmin = JSON.parse(localStorage.getItem("sharehub_user") ?? "null")?.role === "admin" } catch { /* 메뉴 표시용이며 API에서 최종 검사한다. */ }
   return (
@@ -56,6 +56,7 @@ export default function Sidebar() {
                 {[
                   { value: "users", label: "사용자" },
                   { value: "documents", label: "문서" },
+                  { value: "unblock-requests", label: "소명 관리" },
                   { value: "activity-logs", label: "활동 로그" },
                 ].map((item) => (
                   <li key={item.value}>

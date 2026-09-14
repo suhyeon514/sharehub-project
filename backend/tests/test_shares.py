@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import create_app
 from app.extensions import db
-from app.models import Department, Document, DocumentShare, Session, User
+from app.models import ActivityLog, Department, Document, DocumentBlock, DocumentShare, Session, User
 from app.services.document_permissions import can_manage_shares
 
 
@@ -98,8 +98,8 @@ class ShareListTests(unittest.TestCase):
                 response = self.get_list(user, query_string={
                     "user_id": self.user_ids["owner"], "role": "admin",
                 })
-                self.assertEqual(response.status_code, 403)
-                self.assertEqual(set(response.get_json()), {"message"})
+                self.assertEqual(response.status_code, 403 if user in ("viewer", "editor") else 404)
+                self.assertEqual(set(response.get_json()), {"message"} if user in ("viewer", "editor") else {"error"})
 
     def test_empty_list_is_success(self):
         for user in ("owner",):
@@ -107,10 +107,82 @@ class ShareListTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.get_json()["shares"], [])
 
+    def test_blocked_share_endpoints_preserve_data_and_hide_unrelated_documents(self):
+        share_id = self.get_list().get_json()["shares"][0]["id"]
+        with self.app.app_context():
+            before = db.session.execute(db.select(
+                DocumentShare.id, DocumentShare.shared_with_id, DocumentShare.permission,
+            ).order_by(DocumentShare.id)).all()
+            db.session.add(DocumentBlock(
+                document_id=self.document_id, document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"], block_reason="Public reason",
+                block_basis="Internal basis", status="blocked",
+            ))
+            db.session.commit()
+            log_count = db.session.query(ActivityLog).count()
+
+        for visibility in ("shared", "team"):
+            with self.app.app_context():
+                db.session.get(Document, self.document_id).visibility = visibility
+                db.session.commit()
+            for user in self.user_ids:
+                has_access = user in ("owner", "viewer", "editor") or (
+                    visibility == "team" and user != "no_dept"
+                )
+                for method in ("GET", "POST", "PATCH", "DELETE"):
+                    with self.subTest(visibility=visibility, user=user, method=method):
+                        suffix = f"/{share_id}" if method in ("PATCH", "DELETE") else ""
+                        response = self.client.open(
+                            f"/api/documents/{self.document_id}/shares{suffix}",
+                            method=method,
+                            headers={"Authorization": f"Bearer {self.tokens[user]}"},
+                            json={"shared_with_id": self.user_ids["no_dept"], "permission": "download"},
+                        )
+                        self.assertEqual(response.status_code, 403 if has_access else 404)
+                        self.assertEqual(response.get_json(), {"error": {
+                            "code": "DOCUMENT_BLOCKED" if has_access else "DOCUMENT_NOT_FOUND",
+                            "message": "관리자에 의해 이용이 제한된 문서입니다." if has_access else "문서를 찾을 수 없습니다.",
+                        }})
+        with self.app.app_context():
+            self.assertEqual(db.session.execute(db.select(
+                DocumentShare.id, DocumentShare.shared_with_id, DocumentShare.permission,
+            ).order_by(DocumentShare.id)).all(), before)
+            self.assertEqual(db.session.query(ActivityLog).count(), log_count)
+            self.assertEqual(db.session.query(DocumentBlock).count(), 1)
+
+    def test_missing_and_unrelated_share_errors_are_identical(self):
+        share_id = self.get_list().get_json()["shares"][0]["id"]
+        for method in ("GET", "POST", "PATCH", "DELETE"):
+            suffix = f"/{share_id}" if method in ("PATCH", "DELETE") else ""
+            responses = [self.client.open(
+                f"/api/documents/{document_id}/shares{suffix}", method=method,
+                headers={"Authorization": f"Bearer {self.tokens['unrelated']}"}, json={},
+            ) for document_id in (self.document_id, 99999)]
+            self.assertEqual([r.status_code for r in responses], [404, 404])
+            self.assertEqual(responses[0].get_json(), responses[1].get_json())
+
+    def test_unblocked_history_does_not_prevent_normal_sharing(self):
+        with self.app.app_context():
+            db.session.add(DocumentBlock(
+                document_id=self.document_id, document_id_snapshot=self.document_id,
+                blocked_by_id=self.user_ids["admin"], block_reason="Reason",
+                block_basis="Basis", status="unblocked",
+                unblocked_by_id=self.user_ids["admin"],
+                unblocked_at=datetime.now(timezone.utc), unblock_reason="Reviewed",
+            ))
+            db.session.commit()
+        self.assertEqual(self.get_list().status_code, 200)
+        response = self.post_share()
+        self.assertEqual(response.status_code, 201)
+        share_id = response.get_json()["share"]["id"]
+        self.assertEqual(self.mutate_share("PATCH", share_id=share_id,
+            payload={"permission": "edit"}).status_code, 200)
+        self.assertEqual(self.mutate_share("DELETE", share_id=share_id).status_code, 200)
+
     def test_missing_document(self):
         response = self.get_list(document_id=99999)
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(set(response.get_json()), {"message"})
+        self.assertEqual(response.get_json()["error"]["code"], "DOCUMENT_NOT_FOUND")
 
     def test_missing_and_invalid_tokens(self):
         self.assertEqual(self.get_list(user=None).status_code, 401)
@@ -132,11 +204,11 @@ class ShareListTests(unittest.TestCase):
                 self.assertEqual(self.get_list().status_code, 401)
 
     def test_role_change_applies_to_existing_session(self):
-        self.assertEqual(self.get_list("admin").status_code, 403)
+        self.assertEqual(self.get_list("admin").status_code, 404)
         with self.app.app_context():
             db.session.get(User, self.user_ids["admin"]).role = "user"
             db.session.commit()
-        self.assertEqual(self.get_list("admin").status_code, 403)
+        self.assertEqual(self.get_list("admin").status_code, 404)
 
     def test_management_is_independent_of_visibility(self):
         for visibility in ("private", "team", "shared"):
@@ -185,8 +257,8 @@ class ShareListTests(unittest.TestCase):
 
     def test_admin_and_non_owners_cannot_create(self):
         for name in ("viewer", "editor", "unrelated", "no_dept"):
-            self.assertEqual(self.post_share(name).status_code, 403)
-        self.assertEqual(self.post_share("admin").status_code, 403)
+            self.assertEqual(self.post_share(name).status_code, 403 if name in ("viewer", "editor") else 404)
+        self.assertEqual(self.post_share("admin").status_code, 404)
         self.assertEqual(self.post_share(document_id=99999).status_code, 404)
         self.assertEqual(self.client.post(f"/api/documents/{self.document_id}/shares", json={}).status_code, 401)
 
@@ -261,7 +333,7 @@ class ShareListTests(unittest.TestCase):
     def test_mutations_reject_non_managers_wrong_document_and_missing_rows(self):
         for method in ("PATCH", "DELETE"):
             for user in ("admin", "viewer", "editor", "unrelated", "no_dept"):
-                self.assertEqual(self.mutate_share(method, user=user).status_code, 403)
+                self.assertEqual(self.mutate_share(method, user=user).status_code, 403 if user in ("viewer", "editor") else 404)
             self.assertEqual(self.mutate_share(method, user=None).status_code, 401)
             self.assertEqual(self.mutate_share(method, document_id=self.empty_id).status_code, 404)
             self.assertEqual(self.mutate_share(method, document_id=99999).status_code, 404)
@@ -531,7 +603,7 @@ class ShareListTests(unittest.TestCase):
         self.assertEqual(self.admin_get("users", q="owner").get_json()["pagination"]["total"], 1)
         documents = self.admin_get("documents", q="Empty").get_json()
         self.assertEqual(documents["items"][0]["visibility"], "private")
-        self.assertEqual(set(documents["items"][0]), {"id", "title", "owner", "department", "visibility", "updated_at"})
+        self.assertEqual(set(documents["items"][0]), {"id", "title", "owner", "department", "visibility", "updated_at", "active_block"})
         self.post_share()
         with self.app.app_context():
             db.session.add(ActivityLog(action_type="ADMIN_ACTION", detail=json.dumps({

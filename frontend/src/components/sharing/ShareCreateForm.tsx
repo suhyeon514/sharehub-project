@@ -9,10 +9,11 @@ type Permission = "view" | "download" | "edit"
 type Share = { id: number; shared_with: User; permission: Permission }
 const labels: Record<Permission, string> = { view: "조회", download: "다운로드", edit: "편집" }
 
-export default function ShareCreateForm({ documentId, shares, onCreated }: {
+export default function ShareCreateForm({ documentId, shares, onCreated, onBlocked }: {
   documentId: string
   shares: Share[]
   onCreated: (share: Share) => void
+  onBlocked: (message: string) => void
 }) {
   const navigate = useNavigate()
   const [query, setQuery] = useState("")
@@ -33,6 +34,10 @@ export default function ShareCreateForm({ documentId, shares, onCreated }: {
   const handleError = (reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 401) {
       navigate("/login", { replace: true, state: { from: `/documents/${documentId}/share` } })
+      return
+    }
+    if (reason instanceof ApiError && reason.code === "DOCUMENT_BLOCKED") {
+      onBlocked(reason.message)
       return
     }
     setError(reason instanceof ApiError ? reason.message : "서버 연결을 확인해주세요. 공유 요청 후 오류가 났다면 목록을 새로고침해 저장 여부를 확인하세요.")
