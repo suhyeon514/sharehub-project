@@ -234,6 +234,20 @@ export default function DocumentDetailPage() {
 
         /* 문서 접근 권한 없음 */
         if (documentResponse.status === 403) {
+          const errorData = await documentResponse
+            .json()
+            .catch(() => null)
+
+          if (
+            errorData?.error?.code ===
+            "DOCUMENT_BLOCKED"
+          ) {
+            setErrorMessage(
+              "관리자에 의해 이용이 제한된 문서입니다. 내 자료에서 소명 신청 상태를 확인할 수 있습니다.",
+            )
+            return
+          }
+
           setErrorMessage(
             "이 문서를 조회할 권한이 없습니다.",
           )

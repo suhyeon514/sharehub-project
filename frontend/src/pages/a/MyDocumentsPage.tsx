@@ -47,6 +47,40 @@ type DocumentsResponse = {
   }
 }
 
+type UnblockRequestStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+
+type UnblockRequest = {
+  id: number
+  status: UnblockRequestStatus
+  requested_at: string | null
+  review_comment: string | null
+}
+
+type BlockedDocumentItem = {
+  document_id: number
+  block_id: number
+  title: string
+  status: "blocked" | "unblocked"
+  block_reason: string
+  blocked_at: string | null
+  unblock_request: UnblockRequest | null
+}
+
+type BlockedDocumentsResponse = {
+  data: BlockedDocumentItem[]
+}
+
+type ApiErrorResponse = {
+  error?: {
+    code?: string
+    message?: string
+  }
+}
+
 function VisibilityBadge({
   visibility,
 }: {
@@ -104,7 +138,90 @@ export default function MyDocumentsPage() {
     useState<"all" | Visibility>("all")
 
   const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState("")
+
+  const [errorMessage, setErrorMessage] =
+  useState("")
+  
+  const [blockedDocuments, setBlockedDocuments] =
+  useState<BlockedDocumentItem[]>([])
+
+const [blockedLoading, setBlockedLoading] =
+  useState(true)
+
+const [selectedBlock, setSelectedBlock] =
+  useState<BlockedDocumentItem | null>(null)
+
+const [appealReason, setAppealReason] =
+  useState("")
+
+const [appealSubmitting, setAppealSubmitting] =
+  useState(false)
+
+const [appealMessage, setAppealMessage] =
+  useState("")
+
+  const fetchBlockedDocuments = async () => {
+  const token = localStorage.getItem("sharehub_token")
+
+  if (!token) {
+    navigate("/login")
+    return
+  }
+
+  try {
+    setBlockedLoading(true)
+
+    const response = await fetch(
+      "/api/my/blocked-documents",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    )
+
+    if (response.status === 401) {
+      localStorage.removeItem("sharehub_token")
+      localStorage.removeItem("sharehub_user")
+      localStorage.removeItem("sharehub_expires_at")
+
+      navigate("/login")
+      return
+    }
+
+    const data:
+      | BlockedDocumentsResponse
+      | ApiErrorResponse
+      | null =
+      await response.json().catch(() => null)
+
+    if (!response.ok) {
+      const errorData =
+        data as ApiErrorResponse | null
+
+      setAppealMessage(
+        errorData?.error?.message ??
+          "이용 제한 자료를 불러오지 못했습니다.",
+      )
+      return
+    }
+
+    setBlockedDocuments(
+      (data as BlockedDocumentsResponse).data ?? [],
+    )
+  } catch (error) {
+    console.error(
+      "failed to load blocked documents:",
+      error,
+    )
+
+    setAppealMessage(
+      "이용 제한 자료를 불러오지 못했습니다.",
+    )
+  } finally {
+    setBlockedLoading(false)
+  }
+}
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -162,7 +279,83 @@ export default function MyDocumentsPage() {
 
     fetchDocuments()
   }, [navigate])
+const submitAppeal = async () => {
+  if (!selectedBlock) {
+    return
+  }
 
+  const reason = appealReason.trim()
+
+  if (!reason) {
+    setAppealMessage("소명 사유를 입력해주세요.")
+    return
+  }
+
+  const token = localStorage.getItem("sharehub_token")
+
+  if (!token) {
+    navigate("/login")
+    return
+  }
+
+  try {
+    setAppealSubmitting(true)
+    setAppealMessage("")
+
+    const response = await fetch(
+      `/api/document-blocks/${selectedBlock.block_id}/unblock-requests`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reason,
+        }),
+      },
+    )
+
+    if (response.status === 401) {
+      localStorage.removeItem("sharehub_token")
+      localStorage.removeItem("sharehub_user")
+      localStorage.removeItem("sharehub_expires_at")
+
+      navigate("/login")
+      return
+    }
+
+    const data: ApiErrorResponse | null =
+      await response.json().catch(() => null)
+
+    if (!response.ok) {
+      setAppealMessage(
+        data?.error?.message ??
+          "소명 신청에 실패했습니다.",
+      )
+      return
+    }
+
+    setSelectedBlock(null)
+    setAppealReason("")
+    setAppealMessage(
+      "소명 요청이 등록되었습니다.",
+    )
+
+    await fetchBlockedDocuments()
+  } catch (error) {
+    console.error(
+      "failed to submit appeal:",
+      error,
+    )
+
+    setAppealMessage(
+      "소명 신청 중 오류가 발생했습니다.",
+    )
+  } finally {
+    setAppealSubmitting(false)
+  }
+}
   const filteredDocuments = useMemo(() => {
     return documents.filter((document) => {
       const matchesKeyword = document.title
@@ -254,7 +447,117 @@ export default function MyDocumentsPage() {
           </p>
         </div>
       )}
+      {/* 이용 제한 자료 */}
+      {(blockedLoading ||
+        blockedDocuments.length > 0 ||
+        appealMessage) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              이용 제한 자료
+            </CardTitle>
+          </CardHeader>
 
+          <CardContent className="space-y-4">
+            {appealMessage && (
+              <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+                <p className="text-sm text-gray-700">
+                  {appealMessage}
+                </p>
+              </div>
+            )}
+
+            {blockedLoading ? (
+              <p className="text-sm text-gray-500">
+                불러오는 중입니다.
+              </p>
+            ) : (
+              blockedDocuments.map((item) => {
+                const request = item.unblock_request
+
+                const canAppeal =
+                  !request ||
+                  request.status === "rejected" ||
+                  request.status === "cancelled"
+
+                return (
+                  <div
+                    key={item.block_id}
+                    className="rounded-lg border border-gray-200 p-4"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium text-gray-900">
+                            {item.title}
+                          </p>
+
+                          <Badge variant="outline">
+                            이용 제한
+                          </Badge>
+
+                          {request?.status === "pending" && (
+                            <Badge variant="outline">
+                              소명 검토 대기
+                            </Badge>
+                          )}
+
+                          {request?.status === "approved" && (
+                            <Badge variant="outline">
+                              승인
+                            </Badge>
+                          )}
+
+                          {request?.status === "rejected" && (
+                            <Badge variant="outline">
+                              반려
+                            </Badge>
+                          )}
+                        </div>
+
+                        <p className="text-sm text-gray-600">
+                          제한 사유: {item.block_reason}
+                        </p>
+
+                        <p className="text-xs text-gray-500">
+                          제한 일시: {formatDate(item.blocked_at)}
+                        </p>
+
+                        {request?.review_comment && (
+                          <p className="text-sm text-gray-600">
+                            검토 의견: {request.review_comment}
+                          </p>
+                        )}
+                      </div>
+
+                      {request?.status === "pending" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled
+                        >
+                          검토 대기 중
+                        </Button>
+                      ) : canAppeal ? (
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setSelectedBlock(item)
+                            setAppealReason("")
+                            setAppealMessage("")
+                          }}
+                        >
+                          소명 신청
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </CardContent>
+        </Card>
+      )}
       {/* 자료 목록 */}
       <Card>
         <CardHeader>
@@ -359,6 +662,59 @@ export default function MyDocumentsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {selectedBlock && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              소명 신청
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent className="space-y-3">
+            <p className="text-sm text-gray-600">
+              {selectedBlock.title}
+            </p>
+
+            <textarea
+              value={appealReason}
+              onChange={(event) =>
+                setAppealReason(event.target.value)
+              }
+              rows={5}
+              placeholder="이용 제한 해제가 필요한 사유를 입력해주세요."
+              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#0F6E56]"
+            />
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={submitAppeal}
+                disabled={
+                  appealSubmitting ||
+                  !appealReason.trim()
+                }
+              >
+                {appealSubmitting
+                  ? "신청 중..."
+                  : "소명 신청"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSelectedBlock(null)
+                  setAppealReason("")
+                }}
+                disabled={appealSubmitting}
+              >
+                취소
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
