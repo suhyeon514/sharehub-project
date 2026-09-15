@@ -2,6 +2,7 @@
 
 from sqlalchemy import and_, or_
 
+from app.extensions import db
 from app.models import Document, DocumentShare
 from app.services.document_blocks import (
     document_not_blocked_condition,
@@ -58,7 +59,12 @@ def document_view_condition(user):
     )
 
 
-def get_document_access(document, current_user):
+def get_document_access(
+    document,
+    current_user,
+    *,
+    lock_share=False,
+):
     """
     차단 여부와 관계없이 사용자의 원래 문서 접근 근거를 계산한다.
 
@@ -92,10 +98,24 @@ def get_document_access(document, current_user):
         team_access = None
 
     # 3. 개별 공유 확인
-    share = DocumentShare.query.filter_by(
-        document_id=document.id,
-        shared_with_id=current_user.id,
-    ).first()
+        # 3. 개별 공유 확인
+    share_query = db.select(DocumentShare).where(
+        DocumentShare.document_id == document.id,
+        DocumentShare.shared_with_id == current_user.id,
+    )
+
+    # Document 잠금 이후 최신 공유 권한을 확인해야 하는 작업에서는
+    # locking read를 사용한다.
+    if lock_share:
+        share_query = (
+            share_query
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    share = db.session.execute(
+        share_query
+    ).scalar_one_or_none()
 
     if share is not None:
         share_permission = (
