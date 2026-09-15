@@ -197,6 +197,36 @@ class AdminBlockTests(unittest.TestCase):
                 self.assert_counts(0, 0)
         self.assertEqual(self.create().status_code, 201)
 
+    def test_document_update_log_contract_and_access(self):
+        log = ActivityLog(user_id=self.ids["owner"], action_type="DOCUMENT_UPDATE",
+            detail=json.dumps({"operation": "update", "document_id": self.document_id,
+                "changed_fields": ["description", "title", "title", "unknown", {}],
+                "before": "original text", "after": "replacement text",
+                "shared_with_id": self.ids["receiver"], "before_permission": "edit"}))
+        db.session.add(log)
+        db.session.commit()
+        for fields, expected in ((["description", "title", "title", "unknown", {}], ["title", "description"]),
+                                 (["title"], ["title"]), (["description"], ["description"]),
+                                 ("title", None), (None, None)):
+            with self.subTest(fields=fields):
+                detail = json.loads(log.detail)
+                detail["changed_fields"] = fields
+                log.detail = json.dumps(detail)
+                db.session.commit()
+                response = self.client.get("/api/admin/activity-logs?q=DOCUMENT_UPDATE", headers=self.headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["pagination"]["total"], 1)
+                item = response.json["items"][0]
+                self.assertEqual(item["action_type"], "DOCUMENT_UPDATE")
+                self.assertEqual(item["username"], "owner")
+                self.assertIsNotNone(item["created_at"])
+                expected_detail = {"operation": "update", "document_id": self.document_id}
+                if expected is not None:
+                    expected_detail["changed_fields"] = expected
+                self.assertEqual(item["detail"], expected_detail)
+        for user, status in ((None, 401), ("owner", 403), ("receiver", 403)):
+            self.assertEqual(self.client.get("/api/admin/activity-logs", headers=self.headers(user)).status_code, status)
+
     def test_admin_list_logs_and_general_share_denial(self):
         def documents():
             return self.client.get("/api/admin/documents", headers=self.headers()).json

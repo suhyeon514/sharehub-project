@@ -77,7 +77,7 @@ def create_document_block(document_id, current_user, current_session):
     return jsonify({"block": result}), 201
 
 
-def safe_detail(value):
+def safe_detail(value, action_type=None):
     # 자유 형식 원문은 인증 정보/파일 경로를 포함할 수 있어 노출하지 않는다.
     try:
         detail = json.loads(value or "{}")
@@ -85,6 +85,16 @@ def safe_detail(value):
         return {}
     if not isinstance(detail, dict):
         return {}
+    if action_type == "DOCUMENT_UPDATE":
+        result = {}
+        if detail.get("operation") == "update":
+            result["operation"] = "update"
+        if type(detail.get("document_id")) is int:
+            result["document_id"] = detail["document_id"]
+        fields = detail.get("changed_fields")
+        if isinstance(fields, list):
+            result["changed_fields"] = [field for field in ("title", "description") if field in fields]
+        return result
     result = {}
     for key in ("document_id", "share_id", "shared_with_id", "block_id", "request_id"):
         if type(detail.get(key)) is int:
@@ -175,6 +185,6 @@ def admin_list(resource, current_user, current_session):
                 "active_block": active_blocks.get(row.id)})
         else:
             items.append({"id": row.id, "username": row.user.username if row.user else None,
-                "action_type": row.action_type, "created_at": timestamp(row.created_at), "detail": safe_detail(row.detail)})
+                "action_type": row.action_type, "created_at": timestamp(row.created_at), "detail": safe_detail(row.detail, row.action_type)})
     return jsonify({"items": items, "pagination": {"page": page, "per_page": size,
         "total": total, "pages": (total + size - 1) // size}})

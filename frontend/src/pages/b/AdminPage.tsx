@@ -17,10 +17,18 @@ const columns: Record<Resource, [string, string][]> = {
   documents: [["title", "제목"], ["owner", "소유자"], ["department", "부서"], ["visibility", "공개 범위"], ["updated_at", "수정일"]],
   "activity-logs": [["username", "작업자"], ["action_type", "이벤트"], ["created_at", "기록 시각"], ["detail", "상세"]],
 }
-function display(value: unknown, key: string) {
+function display(value: unknown, key: string, actionType: unknown) {
+  if (key === "action_type" && value === "DOCUMENT_UPDATE") return "문서 수정"
   if (value === null || value === undefined) return "—"
   if (key === "detail") {
     const detail = value as Record<string, unknown>
+    if (actionType === "DOCUMENT_UPDATE") {
+      const fields = Array.isArray(detail.changed_fields) ? detail.changed_fields : []
+      const labels = [["title", "제목"], ["description", "설명"]]
+        .filter(([field]) => fields.includes(field)).map(([, label]) => label)
+      return ["문서 수정", detail.document_id != null ? `문서 #${detail.document_id}` : "",
+        labels.length ? `변경 항목: ${labels.join(", ")}` : ""].filter(Boolean).join(" · ")
+    }
     if (detail.operation === "review") return [detail.decision === "approved" ? "소명 승인" : "소명 거절", `문서 #${detail.document_id}`, `요청 #${detail.request_id}`, detail.review_comment].filter(Boolean).join(" · ")
     if (detail.operation === "block") return ["문서 차단", `문서 #${detail.document_id}`, `차단 #${detail.block_id}`, detail.block_reason].filter(Boolean).join(" · ")
     const operations: Record<string, string> = { create: "공유 생성", update: "권한 변경", delete: "공유 해제" }
@@ -97,7 +105,7 @@ function AdminContent({ reload, notice, onBlocked }: { reload: () => void; notic
       {error ? <div role="alert"><p className="text-red-600">{error}</p><Button variant="outline" onClick={reload}>다시 시도</Button></div> : !data ? <p role="status">조회 중입니다.</p> : <>
         <p className="mb-3 text-sm">총 {data.pagination.total}건</p>
         <div className="rounded-lg border bg-white"><Table><TableHeader><TableRow>{columns[resource].map(([key, title]) => <TableHead key={key}>{title}</TableHead>)}{resource === "documents" && <><TableHead>문서 상태</TableHead><TableHead>소명 상태</TableHead><TableHead>관리</TableHead></>}</TableRow></TableHeader><TableBody>
-          {data.items.map((item) => <TableRow key={String(item.id)}>{columns[resource].map(([key]) => <TableCell key={key} className="whitespace-normal break-words">{display(item[key], key)}</TableCell>)}
+          {data.items.map((item) => <TableRow key={String(item.id)}>{columns[resource].map(([key]) => <TableCell key={key} className="whitespace-normal break-words">{display(item[key], key, item.action_type)}</TableCell>)}
             {resource === "documents" && <>
               <TableCell><span className={item.active_block ? "font-medium text-red-700" : "text-gray-600"}>{item.active_block ? "차단" : "정상"}</span></TableCell>
               <TableCell>{item.active_block ? (item.active_block.latest_request_status ? requestLabels[item.active_block.latest_request_status] : "요청 없음") : "—"}</TableCell>
