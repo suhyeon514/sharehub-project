@@ -158,6 +158,7 @@ def update_document(
     access = get_document_access(
         document,
         current_user,
+        lock_share=True,
     )
 
     if not access["allowed"]:
