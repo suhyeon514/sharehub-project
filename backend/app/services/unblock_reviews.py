@@ -49,9 +49,10 @@ def serialize(appeal, user, *, detail=False, block=None, document=None):
         "requested_at": timestamp(appeal.requested_at), "requester": person(appeal.requester)}
     if not detail:
         return {**request_data, "document_id": document.id if document else block.document_id_snapshot,
-            "title": document.title if document else None, "block_id": block.id,
+            "title": document.title if document else None, "document_deleted": document is None, "block_id": block.id,
             "block_status": block.status, **flags}
-    return {"document": {"id": document.id, "title": document.title} if document else None,
+    return {"document": {"id": document.id if document else block.document_id_snapshot,
+            "title": document.title if document else None, "deleted": document is None},
         "block": {"id": block.id, "status": block.status, "block_reason": block.block_reason,
             "block_basis": block.block_basis, "blocked_at": timestamp(block.blocked_at),
             "is_current_block": document is not None and block.status == "blocked" and block.document_id == document.id},

@@ -227,6 +227,58 @@ class AdminBlockTests(unittest.TestCase):
         for user, status in ((None, 401), ("owner", 403), ("receiver", 403)):
             self.assertEqual(self.client.get("/api/admin/activity-logs", headers=self.headers(user)).status_code, status)
 
+    def test_document_delete_log_filters_detail_and_preserves_share_delete(self):
+        detail = {"operation": "delete", "document_id": self.document_id,
+            "share_id": 42, "shared_with_id": self.ids["receiver"],
+            "before_permission": "edit", "after_permission": None,
+            "title": "excluded title", "file_path": "not-a-real-path",
+            "changed_fields": ["title"], "block_basis": "excluded basis"}
+        log = ActivityLog(user_id=self.ids["owner"], action_type="DOCUMENT_DELETE",
+            detail=json.dumps(detail))
+        db.session.add(log)
+        db.session.add(ActivityLog(user_id=self.ids["owner"], action_type="DOCUMENT_SHARE",
+            detail=json.dumps(detail)))
+        db.session.commit()
+        result = self.client.get("/api/admin/activity-logs?q=문서 삭제", headers=self.headers()).json
+        self.assertEqual(result["pagination"]["total"], 1)
+        self.assertEqual(result["items"][0]["action_label"], "문서 삭제")
+        self.assertEqual(result["items"][0]["detail"], {
+            "operation": "delete", "document_id": self.document_id})
+        shared = self.client.get("/api/admin/activity-logs?q=DOCUMENT_SHARE", headers=self.headers()).json
+        self.assertEqual(shared["items"][0]["detail"]["before_permission"], "edit")
+        self.assertEqual(shared["items"][0]["detail"]["share_id"], 42)
+        for raw in ('{', '[]', 'null', '{"operation":"review","document_id":true}',
+                    '{"operation":[],"document_id":"11"}'):
+            with self.subTest(raw=raw):
+                log.detail = raw
+                db.session.commit()
+                response = self.client.get("/api/admin/activity-logs?q=DOCUMENT_DELETE", headers=self.headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["items"][0]["detail"], {})
+
+    def test_activity_labels_and_korean_search(self):
+        labels = {"DOCUMENT_UPDATE": "문서 수정", "DOCUMENT_SHARE": "문서 공유",
+            "DOCUMENT_BLOCK": "문서 차단", "DOCUMENT_UNBLOCK_REVIEW": "소명 심사",
+            "DOCUMENT_DELETE": "문서 삭제", "CUSTOM_EVENT": "CUSTOM_EVENT"}
+        for code in labels:
+            db.session.add(ActivityLog(user_id=self.ids["owner"], action_type=code))
+        db.session.commit()
+        for code, label in labels.items():
+            for query in (code, label):
+                with self.subTest(query=query):
+                    response = self.client.get("/api/admin/activity-logs", headers=self.headers(),
+                        query_string={"q": query})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json["pagination"]["total"], 1)
+                    item = response.json["items"][0]
+                    self.assertEqual(item["action_type"], code)
+                    self.assertEqual(item["action_label"], label)
+        for query, count in (("문서", 4), ("소명", 1), ("%", 0), ("없는 이벤트", 0)):
+            result = self.client.get("/api/admin/activity-logs", headers=self.headers(),
+                query_string={"q": query, "per_page": 1}).json
+            self.assertEqual(result["pagination"]["total"], count)
+            self.assertEqual(len(result["items"]), min(count, 1))
+
     def test_admin_list_logs_and_general_share_denial(self):
         def documents():
             return self.client.get("/api/admin/documents", headers=self.headers()).json

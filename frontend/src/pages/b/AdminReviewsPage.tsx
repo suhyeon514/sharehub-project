@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input"
 type Status = "pending" | "approved" | "rejected" | "cancelled"
 type Reason = "SELF_REVIEW_NOT_ALLOWED" | "UNBLOCK_REQUEST_NOT_PENDING" | "DOCUMENT_BLOCK_NOT_ACTIVE" | null
 type Person = { id: number; username: string }
-type Item = { id: number; document_id: number; title: string; block_id: number; block_status: string; requester: Person; status: Status; requested_at: string; can_review: boolean; review_unavailable_reason: Reason }
+type Item = { id: number; document_id: number; title: string | null; document_deleted: boolean; block_id: number; block_status: string; requester: Person; status: Status; requested_at: string; can_review: boolean; review_unavailable_reason: Reason }
 type List = { items: Item[]; pagination: { page: number; pages: number; total: number } }
-type Detail = { document: { id: number; title: string }; block: { id: number; status: string; block_reason: string; block_basis: string; blocked_at: string; is_current_block: boolean }; unblock_request: { id: number; status: Status; request_reason: string; requested_at: string; requester: Person; review_comment: string | null; reviewed_by: Person | null; reviewed_at: string | null; cancelled_at: string | null }; can_review: boolean; review_unavailable_reason: Reason }
+type Detail = { document: { id: number; title: string | null; deleted: boolean }; block: { id: number; status: string; block_reason: string; block_basis: string; blocked_at: string; is_current_block: boolean }; unblock_request: { id: number; status: Status; request_reason: string; requested_at: string; requester: Person; review_comment: string | null; reviewed_by: Person | null; reviewed_at: string | null; cancelled_at: string | null }; can_review: boolean; review_unavailable_reason: Reason }
 const labels: Record<Status, string> = { pending: "검토 대기", approved: "승인", rejected: "거절", cancelled: "요청 취소" }
 const reasons = { SELF_REVIEW_NOT_ALLOWED: "본인 문서 또는 본인 요청은 심사할 수 없습니다.", UNBLOCK_REQUEST_NOT_PENDING: "이미 처리되었거나 취소된 요청입니다.", DOCUMENT_BLOCK_NOT_ACTIVE: "현재 활성 차단에 대한 요청이 아닙니다." }
 const time = (value: string | null) => value ? new Date(value).toLocaleString("ko-KR") : "—"
@@ -117,7 +117,7 @@ function Reviews() {
       {error ? <p role="alert" className="text-red-600">{error}</p> : !list ? <p role="status">조회 중입니다.</p> : <>
         <p className="mb-3 text-sm">총 {list.pagination.total}건</p>
         <ul className="space-y-2">{list.items.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-4">
-          <div><p className="font-medium">{item.title}</p><p className="text-sm text-gray-500">요청 #{item.id} · {item.requester.username} · {labels[item.status]} · {time(item.requested_at)}</p></div>
+          <div><p className="font-medium">{item.document_deleted ? `삭제된 문서 · 문서 #${item.document_id}` : item.title}</p><p className="text-sm text-gray-500">요청 #{item.id} · {item.requester.username} · {labels[item.status]} · {time(item.requested_at)}</p></div>
           <Button variant="outline" disabled={busy} onClick={() => { setDetail(null); setDetailError(""); setComment(""); setSelected(String(item.id)); if (selected === String(item.id)) setRevision((value) => value + 1) }}>상세 보기</Button>
         </li>)}</ul>
         {!list.items.length && <p className="py-6 text-gray-500">조건에 맞는 소명 요청이 없습니다.</p>}
@@ -131,11 +131,11 @@ function Reviews() {
         {notice && <p role="status" className="text-sm text-emerald-700">{notice}</p>}
         {detailError && <p role="alert" className="text-red-600">{detailError}</p>}
         {!detail ? !detailError && <p role="status">상세 조회 중입니다.</p> : <>
-          <p className="font-medium">{detail.document.title} · 차단 #{detail.block.id}</p>
+          <p className="font-medium">{detail.document.deleted ? `삭제된 문서 · 문서 #${detail.document.id}` : detail.document.title} · 차단 #{detail.block.id}</p>
           <p className="text-sm">{detail.block.status === "blocked" ? "차단" : "해제"} · {labels[detail.unblock_request.status]} · 요청자 {detail.unblock_request.requester.username}</p>
           {[["차단 사유 (소유자 공개)", detail.block.block_reason], ["내부 근거 (관리자 전용)", detail.block.block_basis], ["소명 내용", detail.unblock_request.request_reason], ["심사 의견 (소유자 공개)", detail.unblock_request.review_comment ?? "—"]].map(([label, value]) => <div key={label}><h3 className="text-sm font-semibold">{label}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700">{value}</p></div>)}
           <p className="text-sm text-gray-500">요청: {time(detail.unblock_request.requested_at)} · 심사: {time(detail.unblock_request.reviewed_at)} · 심사자: {detail.unblock_request.reviewed_by?.username ?? "—"}</p>
-          {!detail.can_review ? <p role="status" className="rounded-lg bg-gray-100 p-3 text-sm">{detail.review_unavailable_reason ? reasons[detail.review_unavailable_reason] : "현재 심사할 수 없습니다."}</p> : <div>
+          {detail.document.deleted || !detail.can_review ? <p role="status" className="rounded-lg bg-gray-100 p-3 text-sm">{detail.document.deleted ? "삭제된 문서의 과거 이력입니다. 새로운 심사는 할 수 없습니다." : detail.review_unavailable_reason ? reasons[detail.review_unavailable_reason] : "현재 심사할 수 없습니다."}</p> : <div>
             <label htmlFor="review-comment" className="block text-sm font-medium">심사 의견</label>
             <p className="my-1 text-sm text-gray-500">소유자에게 공개됩니다. 앞뒤 공백 제외 1~1,000자. 승인하면 해당 차단이 해제되고, 거절하면 차단이 유지됩니다.</p>
             <textarea id="review-comment" rows={4} disabled={busy} className="w-full rounded-md border p-2" value={comment} onChange={(event) => setComment(event.target.value)} />
