@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react"
+import { createPortal } from "react-dom"
+import { ApiError, apiPatch } from "@/lib/api"
 import { useNavigate, useParams } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
@@ -45,6 +47,15 @@ type DocumentDetail = {
 
 type DocumentResponse = {
   data: DocumentDetail
+}
+
+type DocumentUpdateResponse = {
+  document: {
+    id: number
+    title: string
+    description: string | null
+    updated_at: string
+  }
 }
 
 type CommentItem = {
@@ -172,6 +183,21 @@ export default function DocumentDetailPage() {
   const [commentError, setCommentError] =
     useState("")
 
+  const [isEditOpen, setIsEditOpen] =
+  useState(false)
+
+  const [editTitle, setEditTitle] =
+    useState("")
+
+  const [editDescription, setEditDescription] =
+    useState("")
+
+  const [editError, setEditError] =
+    useState("")
+
+  const [isEditSubmitting, setIsEditSubmitting] =
+    useState(false)
+
   /* =========================
      문서 상세 + 댓글 조회
   ========================= */
@@ -292,6 +318,177 @@ export default function DocumentDetailPage() {
 
     loadDocument()
   }, [documentId, hasValidId, navigate])
+    /* =========================
+     문서 수정
+  ========================= */
+
+  const openEditModal = () => {
+    if (!document) {
+      return
+    }
+
+    setEditTitle(document.title)
+    setEditDescription(
+      document.description ?? "",
+    )
+    setEditError("")
+    setIsEditOpen(true)
+  }
+
+  const closeEditModal = () => {
+    if (isEditSubmitting) {
+      return
+    }
+
+    setIsEditOpen(false)
+    setEditError("")
+  }
+
+  const handleEditSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault()
+
+    if (
+      !document ||
+      !hasValidId ||
+      isEditSubmitting
+    ) {
+      return
+    }
+
+    const normalizedTitle =
+      editTitle.trim()
+
+    const normalizedDescription =
+      editDescription.trim()
+
+    const titleLength =
+      Array.from(normalizedTitle).length
+
+    const descriptionLength =
+      Array.from(normalizedDescription).length
+
+    if (titleLength === 0) {
+      setEditError(
+        "제목을 입력해주세요.",
+      )
+      return
+    }
+
+    if (titleLength > 255) {
+      setEditError(
+        "제목은 255자 이하로 입력해주세요.",
+      )
+      return
+    }
+
+    if (descriptionLength > 5000) {
+      setEditError(
+        "설명은 5000자 이하로 입력해주세요.",
+      )
+      return
+    }
+
+    try {
+      setIsEditSubmitting(true)
+      setEditError("")
+
+      const response =
+        await apiPatch<DocumentUpdateResponse>(
+          `/api/documents/${documentId}`,
+          {
+            title: normalizedTitle,
+            description:
+              normalizedDescription === ""
+                ? null
+                : normalizedDescription,
+          },
+        )
+
+      setDocument((current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+          title:
+            response.document.title,
+          description:
+            response.document.description,
+          updated_at:
+            response.document.updated_at,
+        }
+      })
+
+      setIsEditOpen(false)
+      setEditError("")
+      setErrorMessage("")
+    } catch (error) {
+      console.error(
+        "document update failed:",
+        error,
+      )
+
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
+          navigate("/login")
+          return
+        }
+
+        if (
+          error.code ===
+          "DOCUMENT_BLOCKED"
+        ) {
+          setIsEditOpen(false)
+
+          setErrorMessage(
+            "관리자에 의해 이용이 제한된 문서입니다. 내 자료에서 소명 신청 상태를 확인할 수 있습니다.",
+          )
+          return
+        }
+
+        if (
+          error.code ===
+          "DOCUMENT_EDIT_FORBIDDEN"
+        ) {
+          setIsEditOpen(false)
+
+          setErrorMessage(
+            "문서 수정 권한이 변경되어 수정할 수 없습니다.",
+          )
+          return
+        }
+
+        if (
+          error.code ===
+          "DOCUMENT_NOT_FOUND"
+        ) {
+          setIsEditOpen(false)
+          setDocument(null)
+
+          setErrorMessage(
+            "문서를 찾을 수 없습니다.",
+          )
+          return
+        }
+
+        /*
+         * VALIDATION_ERROR를 포함한 API 오류는
+         * 모달을 유지하여 작성 중인 값을 보존한다.
+         */
+        setEditError(error.message)
+        return
+      }
+
+      setEditError(
+        "서버와 통신할 수 없습니다. 입력한 내용은 유지되므로 잠시 후 다시 시도해주세요.",
+      )
+    } finally {
+      setIsEditSubmitting(false)
+    }
+  }
 
   /* =========================
      파일 다운로드
@@ -583,6 +780,119 @@ export default function DocumentDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+
+        {isEditOpen &&
+          createPortal(
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
+              <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
+                <form onSubmit={handleEditSubmit}>
+                  <div className="border-b px-6 py-4">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      문서 수정
+                    </h3>
+
+                    <p className="mt-1 text-sm text-gray-500">
+                      문서의 제목과 설명을 수정할 수 있습니다.
+                    </p>
+                  </div>
+
+                  <div className="space-y-5 px-6 py-5">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <label
+                          htmlFor="edit-document-title"
+                          className="text-sm font-medium text-gray-700"
+                        >
+                          제목
+                        </label>
+
+                        <span className="text-xs text-gray-500">
+                          {Array.from(editTitle).length}/255
+                        </span>
+                      </div>
+
+                      <input
+                        id="edit-document-title"
+                        type="text"
+                        value={editTitle}
+                        disabled={isEditSubmitting}
+                        onChange={(event) => {
+                          setEditTitle(event.target.value)
+
+                          if (editError) {
+                            setEditError("")
+                          }
+                        }}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#0F6E56] focus:ring-1 focus:ring-[#0F6E56]"
+                        placeholder="문서 제목"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <label
+                          htmlFor="edit-document-description"
+                          className="text-sm font-medium text-gray-700"
+                        >
+                          설명
+                        </label>
+
+                        <span className="text-xs text-gray-500">
+                          {Array.from(editDescription).length}/5000
+                        </span>
+                      </div>
+
+                      <textarea
+                        id="edit-document-description"
+                        value={editDescription}
+                        disabled={isEditSubmitting}
+                        onChange={(event) => {
+                          setEditDescription(event.target.value)
+
+                          if (editError) {
+                            setEditError("")
+                          }
+                        }}
+                        rows={7}
+                        className="w-full resize-y rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#0F6E56] focus:ring-1 focus:ring-[#0F6E56]"
+                        placeholder="문서에 대한 설명을 입력하세요."
+                      />
+                    </div>
+
+                    {editError && (
+                      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                        <p className="text-sm text-red-700">
+                          {editError}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end gap-2 border-t px-6 py-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isEditSubmitting}
+                      onClick={closeEditModal}
+                    >
+                      취소
+                    </Button>
+
+                    <Button
+                      type="submit"
+                      disabled={isEditSubmitting}
+                      className="bg-[#0F6E56] text-white hover:bg-[#0C5B47]"
+                    >
+                      {isEditSubmitting
+                        ? "저장 중..."
+                        : "저장"}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            window.document.body,
+          )}
       {/* 상단 제목 */}
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -619,18 +929,18 @@ export default function DocumentDetailPage() {
             공유
           </Button>
 
-          {/* 수정 API는 아직 연결 전 */}
+          {/* 수정 API 연결*/}
 
-          <Button
-            type="button"
-            variant="outline"
-            disabled={
-              document.access.permission !==
-              "edit"
-            }
-          >
-            수정
-          </Button>
+          {document.access.permission ===
+            "edit" && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openEditModal}
+            >
+              수정
+            </Button>
+          )}
 
           {/* 삭제 API는 아직 연결 전 */}
 
