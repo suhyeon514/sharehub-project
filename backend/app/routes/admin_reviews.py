@@ -33,8 +33,8 @@ def list_requests(current_user, current_session):
         return error("VALIDATION_ERROR", "페이지 또는 차단 ID를 확인해주세요.", 400)
     if status not in ("", "pending", "approved", "rejected", "cancelled") or len(q) > 255:
         return error("VALIDATION_ERROR", "상태 또는 검색어를 확인해주세요.", 400)
-    # 삭제된 문서 이력의 조회 계약은 후속 범위이다.
-    statement = query_requests().join(DocumentUnblockRequest.block).join(DocumentBlock.document)
+    # 문서 삭제 후에도 차단·소명 이력은 목록과 집계에 포함한다.
+    statement = query_requests().join(DocumentUnblockRequest.block).outerjoin(DocumentBlock.document)
     if status:
         statement = statement.where(DocumentUnblockRequest.status == status)
     if block_id is not None:
@@ -52,7 +52,7 @@ def list_requests(current_user, current_session):
 @admin_required
 def request_detail(request_id, current_user, current_session):
     appeal = db.session.execute(query_requests().where(DocumentUnblockRequest.id == request_id)).scalar_one_or_none()
-    if appeal is None or appeal.block.document is None:
+    if appeal is None:
         return missing()
     return jsonify(serialize(appeal, current_user, detail=True))
 

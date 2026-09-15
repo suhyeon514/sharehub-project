@@ -20,7 +20,7 @@ export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, { method: "PATCH", body: JSON.stringify(body) })
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
+export function apiDelete<T = void>(path: string): Promise<T> {
   return apiRequest<T>(path, { method: "DELETE" })
 }
 
@@ -34,6 +34,7 @@ async function apiRequest<T>(path: string, options: RequestInit): Promise<T> {
   if (response.status === 401) {
     for (const key of ["sharehub_token", "sharehub_user", "sharehub_expires_at"]) localStorage.removeItem(key)
   }
+  if (response.status === 204) return undefined as T
   const data = await response.json().catch(() => null)
   if (!response.ok) {
     const code = typeof data?.error?.code === "string" ? data.error.code : null

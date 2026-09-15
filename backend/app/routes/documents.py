@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models import ActivityLog, Document, DocumentBlock
+from app.models import ActivityLog, Document, DocumentBlock, FileCleanupJob
 from app.models.comment import Comment
 from app.routes.auth import login_required
 from app.services.document_permissions import (
@@ -21,6 +21,7 @@ from app.services.document_blocks import (
     is_document_blocked,
     blocked_response,
 )
+from app.services.file_cleanup import process_cleanup_job_safely
 
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/api/documents")
@@ -371,6 +372,182 @@ def update_document(
             }
         }
     ), 200
+
+
+@documents_bp.route("/<int:document_id>", methods=["DELETE"])
+@login_required
+def delete_document(
+    document_id,
+    current_user,
+    current_session,
+):
+    # 공유 변경/PATCH와 동일하게 Document를 가장 먼저 잠근다.
+    document = db.session.execute(
+        db.select(Document)
+        .where(Document.id == document_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+    if document is None:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    # Document 잠금 이후 최신 접근 근거를 확인한다.
+    # 개별 공유 역시 locking read로 최신 상태를 사용한다.
+    access = get_document_access(
+        document,
+        current_user,
+        lock_share=True,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    # 접근 근거가 있는 사용자에게만 현재 차단 여부를 공개한다.
+    active_block = db.session.execute(
+        db.select(DocumentBlock.id)
+        .where(
+            DocumentBlock.document_id == document.id,
+            DocumentBlock.status == "blocked",
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if active_block is not None:
+        return blocked_response()
+
+    # 삭제는 edit 공유 권한과 별개다.
+    # 오직 현재 문서 소유자만 삭제할 수 있다.
+    if document.owner_id != current_user.id:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_DELETE_FORBIDDEN",
+                    "message": "문서를 삭제할 권한이 없습니다.",
+                }
+            }
+        ), 403
+
+    deleted_document_id = document.id
+    cleanup_file_path = document.file_path
+
+    try:
+        # -----------------------------------------------------
+        # 과거 차단 이력 보존
+        #
+        # Document FK는 RESTRICT이므로 Document 삭제 전에
+        # 연결만 명시적으로 NULL 처리한다.
+        # document_id_snapshot은 변경하지 않는다.
+        # -----------------------------------------------------
+        historical_blocks = db.session.execute(
+            db.select(DocumentBlock)
+            .where(
+                DocumentBlock.document_id
+                == deleted_document_id
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalars().all()
+
+        for block in historical_blocks:
+            block.document_id = None
+
+        # FK RESTRICT 환경에서 block unlink를 먼저 DB에 반영한다.
+        db.session.flush()
+
+        # -----------------------------------------------------
+        # DOCUMENT_DELETE 감사 로그
+        # -----------------------------------------------------
+        delete_log = ActivityLog(
+            user_id=current_user.id,
+            action_type="DOCUMENT_DELETE",
+            detail=json.dumps(
+                {
+                    "operation": "delete",
+                    "document_id": deleted_document_id,
+                },
+                ensure_ascii=False,
+            ),
+            ip_address=request.remote_addr,
+        )
+
+        db.session.add(delete_log)
+
+        # -----------------------------------------------------
+        # durable physical-file cleanup job
+        #
+        # Document FK를 두지 않고 snapshot만 보존한다.
+        # -----------------------------------------------------
+        cleanup_job = FileCleanupJob(
+            document_id_snapshot=deleted_document_id,
+            file_path=cleanup_file_path,
+        )
+
+        db.session.add(cleanup_job)
+
+        # comments / shares는 Document relationship의
+        # delete-orphan cascade를 사용한다.
+        db.session.delete(document)
+
+        # MariaDB의 RESTRICT FK를 실제 commit 전에 처리하도록
+        # SQLAlchemy delete ordering을 여기서 실행한다.
+        db.session.flush()
+
+        # cleanup_job.id가 생성된 상태에서 원자적으로 commit한다.
+        cleanup_job_id = cleanup_job.id
+
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+
+        current_app.logger.exception(
+            "document delete transaction failed: document_id=%s",
+            document_id,
+        )
+
+        return jsonify(
+            {
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": "문서를 삭제하지 못했습니다.",
+                }
+            }
+        ), 500
+
+    # ---------------------------------------------------------
+    # DB 삭제가 성공한 뒤 실제 파일 정리를 한 번 시도한다.
+    #
+    # 여기서 실패하더라도 문서 DB 삭제는 이미 완료됐으므로
+    # DELETE 응답을 500으로 변경하지 않는다.
+    # pending cleanup job은 CLI에서 재시도할 수 있다.
+    # ---------------------------------------------------------
+    try:
+        process_cleanup_job_safely(cleanup_job_id)
+
+    except Exception:
+        db.session.rollback()
+
+        current_app.logger.exception(
+            "immediate file cleanup failed: cleanup_job_id=%s",
+            cleanup_job_id,
+        )
+
+    return "", 204
 
 
 @documents_bp.route("/<int:document_id>", methods=["GET"])

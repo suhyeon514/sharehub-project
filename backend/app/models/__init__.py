@@ -18,6 +18,7 @@ from app.models.document_share import DocumentShare
 from app.models.activity_log import ActivityLog
 from app.models.document_block import DocumentBlock
 from app.models.document_unblock_request import DocumentUnblockRequest
+from app.models.file_cleanup_job import FileCleanupJob
 
 __all__ = [
     "Department",
@@ -29,4 +30,5 @@ __all__ = [
     "ActivityLog",
     "DocumentBlock",
     "DocumentUnblockRequest",
+    "FileCleanupJob",
 ]

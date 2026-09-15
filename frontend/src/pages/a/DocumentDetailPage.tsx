@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { ApiError, apiPatch } from "@/lib/api"
+import { ApiError, apiDelete, apiPatch } from "@/lib/api"
 import { useNavigate, useParams } from "react-router-dom"
 
+import AdminModal from "@/components/admin/AdminModal"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -197,6 +198,46 @@ export default function DocumentDetailPage() {
 
   const [isEditSubmitting, setIsEditSubmitting] =
     useState(false)
+
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const deleteInFlight = useRef(false)
+
+  const closeDeleteModal = () => {
+    if (deleteInFlight.current) return
+    setIsDeleteOpen(false)
+    setDeleteError("")
+  }
+
+  const handleDelete = async () => {
+    if (!document || document.access.source !== "owner" || deleteInFlight.current) return
+    deleteInFlight.current = true
+    setIsDeleting(true)
+    setDeleteError("")
+    try {
+      await apiDelete(`/api/documents/${document.id}`)
+      navigate("/documents/mine", { replace: true })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearAuth()
+        navigate("/login", { replace: true })
+      } else if (error instanceof ApiError && (error.status === 404 || error.code === "DOCUMENT_BLOCKED")) {
+        setIsDeleteOpen(false)
+        setDocument(null)
+        setComments([])
+        setErrorMessage(error.code === "DOCUMENT_BLOCKED"
+          ? "관리자에 의해 이용이 제한된 문서입니다. 내 자료에서 차단 상태를 확인해주세요."
+          : "문서를 찾을 수 없습니다. 이미 삭제되었거나 접근 권한이 변경되었을 수 있습니다.")
+      } else {
+        setDeleteError(error instanceof ApiError ? error.message
+          : "서버 응답을 확인하지 못했습니다. 삭제되었을 수 있으니 취소 후 목록을 확인해주세요.")
+      }
+    } finally {
+      deleteInFlight.current = false
+      setIsDeleting(false)
+    }
+  }
 
   /* =========================
      문서 상세 + 댓글 조회
@@ -780,6 +821,18 @@ export default function DocumentDetailPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      {isDeleteOpen && <AdminModal title="문서 영구 삭제" busy={isDeleting} onClose={closeDeleteModal}>
+        <p className="break-words font-medium">{document.title}</p>
+        <p className="text-sm text-gray-600">이 문서와 댓글·공유 정보를 영구 삭제합니다. 삭제 후에는 복구할 수 없습니다.</p>
+        {deleteError && <p role="alert" className="text-sm text-red-600">{deleteError}</p>}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={isDeleting} onClick={closeDeleteModal}>취소</Button>
+          <Button type="button" variant="destructive" disabled={isDeleting} onClick={() => void handleDelete()}>
+            {isDeleting ? "삭제 중…" : "영구 삭제"}
+          </Button>
+        </div>
+      </AdminModal>}
+
 
         {isEditOpen &&
           createPortal(
@@ -942,18 +995,16 @@ export default function DocumentDetailPage() {
             </Button>
           )}
 
-          {/* 삭제 API는 아직 연결 전 */}
-
-          <Button
-            type="button"
-            variant="outline"
-            disabled={
-              document.access.source !==
-              "owner"
-            }
-          >
-            삭제
-          </Button>
+          {document.access.source === "owner" && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting || isEditSubmitting || isCommentSubmitting || isDownloading}
+              onClick={() => { setDeleteError(""); setIsDeleteOpen(true) }}
+            >
+              삭제
+            </Button>
+          )}
         </div>
       </div>
 

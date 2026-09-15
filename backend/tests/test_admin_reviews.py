@@ -158,3 +158,53 @@ class AdminReviewTests(unittest.TestCase):
             self.assertEqual(appeal.status, "pending")
             self.assertIsNone(appeal.reviewed_at)
             self.assertEqual(db.session.query(ActivityLog).filter_by(action_type="DOCUMENT_UNBLOCK_REVIEW").count(), 0)
+
+    def test_deleted_document_history_listing_detail_and_review_denial(self):
+        # 실제 DELETE API 없이 승인 후 삭제된 상태를 격리 DB에 구성한다.
+        self.assertEqual(self.review().status_code, 200)
+        block = db.session.get(DocumentBlock, self.block_id)
+        block.document = None
+        db.session.flush()
+        db.session.delete(db.session.get(Document, self.document_id))
+        db.session.commit()
+        logs_before = [(row.id, row.detail) for row in db.session.query(ActivityLog).all()]
+
+        for filters in ({}, {"status": "approved"}, {"block_id": self.block_id}):
+            result = self.listing(**filters)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json["pagination"]["total"], 1)
+            item = result.json["items"][0]
+            self.assertEqual(item["document_id"], self.document_id)
+            self.assertTrue(item["document_deleted"])
+            self.assertIsNone(item["title"])
+            self.assertFalse(item["can_review"])
+            self.assertNotIn("block_basis", item)
+        self.assertEqual(self.listing(page=2, per_page=1).json["items"], [])
+        self.assertEqual(self.listing(page=2, per_page=1).json["pagination"]["total"], 1)
+        self.assertEqual(self.listing(status="pending").json["items"], [])
+        self.assertEqual(self.listing(q="Block fixture").json["items"], [])
+
+        detail = self.detail()
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json["document"], {
+            "id": self.document_id, "title": None, "deleted": True})
+        self.assertFalse(detail.json["can_review"])
+        self.assertFalse(detail.json["block"]["is_current_block"])
+        for decision in ("approved", "rejected"):
+            self.assertEqual(self.review(decision).status_code, 409)
+        db.session.expire_all()
+        self.assertEqual(db.session.get(DocumentUnblockRequest, self.request_id).status, "approved")
+        self.assertEqual(db.session.get(DocumentBlock, self.block_id).document_id_snapshot, self.document_id)
+        self.assertEqual(db.session.get(DocumentBlock, self.block_id).status, "unblocked")
+        self.assertEqual([(row.id, row.detail) for row in db.session.query(ActivityLog).all()], logs_before)
+        for user, expected in ((None, 401), ("owner", 403)):
+            self.assertEqual(self.detail(user).status_code, expected)
+
+    def test_existing_document_response_keeps_title_and_reviewability(self):
+        item = self.listing(q="Block fixture").json["items"][0]
+        self.assertFalse(item["document_deleted"])
+        self.assertEqual(item["title"], "Block fixture")
+        detail = self.detail().json
+        self.assertEqual(detail["document"], {
+            "id": self.document_id, "title": "Block fixture", "deleted": False})
+        self.assertTrue(detail["can_review"])

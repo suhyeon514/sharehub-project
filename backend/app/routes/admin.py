@@ -7,6 +7,15 @@ from app.extensions import db
 from app.models import User, Document, DocumentBlock, DocumentUnblockRequest, ActivityLog
 from app.services.admin_permissions import admin_required
 
+ACTION_LABELS = {
+    "DOCUMENT_UPDATE": "문서 수정",
+    "DOCUMENT_SHARE": "문서 공유",
+    "DOCUMENT_BLOCK": "문서 차단",
+    "DOCUMENT_UNBLOCK_REVIEW": "소명 심사",
+    "DOCUMENT_DELETE": "문서 삭제",
+}
+
+
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 
@@ -85,6 +94,13 @@ def safe_detail(value, action_type=None):
         return {}
     if not isinstance(detail, dict):
         return {}
+    if action_type == "DOCUMENT_DELETE":
+        result = {}
+        if detail.get("operation") == "delete":
+            result["operation"] = "delete"
+        if type(detail.get("document_id")) is int:
+            result["document_id"] = detail["document_id"]
+        return result
     if action_type == "DOCUMENT_UPDATE":
         result = {}
         if detail.get("operation") == "update":
@@ -155,7 +171,11 @@ def admin_list(resource, current_user, current_session):
                 active = active.where(latest_status == status)
             statement = statement.where(active.exists())
     if query:
-        statement = statement.where(field.contains(query, autoescape=True))
+        condition = field.contains(query, autoescape=True)
+        if resource == "activity-logs":
+            matching_actions = [code for code, label in ACTION_LABELS.items() if query in label]
+            condition = db.or_(condition, ActivityLog.action_type.in_(matching_actions))
+        statement = statement.where(condition)
     total = db.session.scalar(db.select(db.func.count()).select_from(statement.subquery()))
     rows = db.session.execute(statement.options(*options).order_by(model.created_at.desc(), model.id.desc())
         .offset((page - 1) * size).limit(size)).scalars().all()
@@ -185,6 +205,6 @@ def admin_list(resource, current_user, current_session):
                 "active_block": active_blocks.get(row.id)})
         else:
             items.append({"id": row.id, "username": row.user.username if row.user else None,
-                "action_type": row.action_type, "created_at": timestamp(row.created_at), "detail": safe_detail(row.detail, row.action_type)})
+                "action_type": row.action_type, "action_label": ACTION_LABELS.get(row.action_type, row.action_type), "created_at": timestamp(row.created_at), "detail": safe_detail(row.detail, row.action_type)})
     return jsonify({"items": items, "pagination": {"page": page, "per_page": size,
         "total": total, "pages": (total + size - 1) // size}})
