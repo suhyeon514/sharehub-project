@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from datetime import timezone
@@ -6,11 +7,14 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
+from app.models import ActivityLog, Document, DocumentBlock
 from app.models.comment import Comment
-from app.models.document import Document
 from app.routes.auth import login_required
 from app.services.document_permissions import (
-    get_document_access, can_view_document, can_download_document,
+    can_download_document,
+    can_view_document,
+    get_document_access,
+    has_document_permission,
 )
 from app.services.document_blocks import (
     document_not_blocked_condition,
@@ -123,6 +127,249 @@ def serialize_comment(comment):
         },
         "created_at": to_utc_iso(comment.created_at),
     }
+
+
+@documents_bp.route("/<int:document_id>", methods=["PATCH"])
+@login_required
+def update_document(
+    document_id,
+    current_user,
+    current_session,
+):
+    # 공유 변경·차단 API와 동일하게 Document를 가장 먼저 잠근다.
+    document = db.session.execute(
+        db.select(Document)
+        .where(Document.id == document_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+    if document is None:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    # Document 잠금 획득 이후 현재 접근 근거를 다시 계산한다.
+    access = get_document_access(
+        document,
+        current_user,
+    )
+
+    if not access["allowed"]:
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_NOT_FOUND",
+                    "message": "문서를 찾을 수 없습니다.",
+                }
+            }
+        ), 404
+
+    # REPEATABLE READ의 오래된 일반 조회가 아니라 locking read로
+    # Document 잠금 이후의 활성 차단 상태를 확인한다.
+    active_block = db.session.execute(
+        db.select(DocumentBlock.id)
+        .where(
+            DocumentBlock.document_id == document.id,
+            DocumentBlock.status == "blocked",
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if active_block is not None:
+        return blocked_response()
+
+    if not has_document_permission(access, "edit"):
+        return jsonify(
+            {
+                "error": {
+                    "code": "DOCUMENT_EDIT_FORBIDDEN",
+                    "message": "문서를 수정할 권한이 없습니다.",
+                }
+            }
+        ), 403
+
+    data = request.get_json(silent=True)
+
+    allowed_fields = {"title", "description"}
+
+    if not isinstance(data, dict):
+        return jsonify(
+            {
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "올바른 JSON 객체를 전송해주세요.",
+                }
+            }
+        ), 400
+
+    if not data:
+        return jsonify(
+            {
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "수정할 필드를 하나 이상 입력해주세요.",
+                }
+            }
+        ), 400
+
+    unknown_fields = set(data) - allowed_fields
+
+    if unknown_fields:
+        return jsonify(
+            {
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "title과 description 필드만 수정할 수 있습니다.",
+                }
+            }
+        ), 400
+
+    normalized = {}
+
+    if "title" in data:
+        title = data["title"]
+
+        if not isinstance(title, str):
+            return jsonify(
+                {
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "제목은 문자열이어야 합니다.",
+                    }
+                }
+            ), 400
+
+        title = title.strip()
+
+        if not title:
+            return jsonify(
+                {
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "제목을 입력해주세요.",
+                    }
+                }
+            ), 400
+
+        if len(title) > 255:
+            return jsonify(
+                {
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "제목은 255자 이하로 입력해주세요.",
+                    }
+                }
+            ), 400
+
+        normalized["title"] = title
+
+    if "description" in data:
+        description = data["description"]
+
+        if description is not None and not isinstance(description, str):
+            return jsonify(
+                {
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "설명은 문자열 또는 null이어야 합니다.",
+                    }
+                }
+            ), 400
+
+        if isinstance(description, str):
+            description = description.strip()
+
+            if not description:
+                description = None
+
+        if description is not None and len(description) > 5000:
+            return jsonify(
+                {
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "설명은 5000자 이하로 입력해주세요.",
+                    }
+                }
+            ), 400
+
+        normalized["description"] = description
+
+    changed_fields = []
+
+    if "title" in normalized and normalized["title"] != document.title:
+        changed_fields.append("title")
+
+    if (
+        "description" in normalized
+        and normalized["description"] != document.description
+    ):
+        changed_fields.append("description")
+
+    # 정규화 후 실제 변경 없음:
+    # updated_at과 감사 로그를 변경하지 않는다.
+    if not changed_fields:
+        db.session.commit()
+
+        return jsonify(
+            {
+                "document": {
+                    "id": document.id,
+                    "title": document.title,
+                    "description": document.description,
+                    "updated_at": to_utc_iso(document.updated_at),
+                }
+            }
+        ), 200
+
+    try:
+        if "title" in changed_fields:
+            document.title = normalized["title"]
+
+        if "description" in changed_fields:
+            document.description = normalized["description"]
+
+        db.session.add(
+            ActivityLog(
+                user_id=current_user.id,
+                action_type="DOCUMENT_UPDATE",
+                ip_address=request.remote_addr,
+                detail=json.dumps(
+                    {
+                        "operation": "update",
+                        "document_id": document.id,
+                        "changed_fields": changed_fields,
+                    }
+                ),
+            )
+        )
+
+        # updated_at/onupdate와 DB 생성 값을 응답 전에 확정한다.
+        db.session.flush()
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+        raise
+
+    # commit 이후 DB 값을 다시 읽는다.
+    db.session.refresh(document)
+
+    return jsonify(
+        {
+            "document": {
+                "id": document.id,
+                "title": document.title,
+                "description": document.description,
+                "updated_at": to_utc_iso(document.updated_at),
+            }
+        }
+    ), 200
 
 
 @documents_bp.route("/<int:document_id>", methods=["GET"])
