@@ -15,7 +15,7 @@ def create_app(test_config=None):
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # 7개 모델을 Migration이 인식하도록 import
+    # 모델을 Migration이 인식하도록 import
     from app import models  # noqa: F401
 
     # Blueprint 등록
@@ -54,5 +54,9 @@ def create_app(test_config=None):
     @app.route("/api/health")
     def health():
         return {"status": "ok", "service": "sharehub-api"}
+
+    # Flask CLI 등록
+    from app.cli import register_cli
+    register_cli(app)
 
     return app
