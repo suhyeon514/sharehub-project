@@ -1189,9 +1189,16 @@ export default function DocumentDetailPage() {
                           }
                         </p>
 
-                        <p className="mt-2 whitespace-pre-wrap break-words text-sm text-gray-700">
+                        {/* <p className="mt-2 whitespace-pre-wrap break-words text-sm text-gray-700">
                           {item.content}
-                        </p>
+                        </p> */}
+
+                        <p
+                          className="mt-2 whitespace-pre-wrap break-words text-sm text-gray-700"
+                          dangerouslySetInnerHTML={{
+                            __html: item.content,
+                          }}
+                        />
                       </div>
 
                       <span className="shrink-0 text-xs text-gray-400">
