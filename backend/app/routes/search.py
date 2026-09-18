@@ -29,7 +29,29 @@ def search_documents(current_user, current_session):
     access = document_view_condition(current_user)
     statement = db.select(Document).where(access)
     if query:
-        statement = statement.where(Document.title.contains(query, autoescape=True))
+        # ---------------------------------------------------------
+        # VULNERABLE LAB: SQL Injection
+        #
+        # 취약점:
+        # 정상 구현에서는 SQLAlchemy가 검색어를 parameter로 처리하지만,
+        # 취약 버전에서는 사용자 입력 query를 SQL 문자열에 직접 결합한다.
+        #
+        # 정상 구현:
+        # statement = statement.where(
+        #     Document.title.contains(query, autoescape=True)
+        # )
+        #
+        # 결과:
+        # 공격자가 q 파라미터에 SQL 구문을 삽입하여
+        # 검색 조건에 영향을 줄 수 있다.
+        # ---------------------------------------------------------
+
+        # INTENTIONALLY VULNERABLE:
+        vulnerable_condition = db.text(
+            f"documents.title LIKE '%{query}%' OR '{query}' = 'SQLI_BYPASS'"
+        )
+        statement = statement.where(vulnerable_condition)
+
     if department_id is not None:
         statement = statement.where(Document.department_id == department_id)
     if owner_id is not None:
