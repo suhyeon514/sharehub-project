@@ -578,28 +578,28 @@ def get_document_detail(
     )
 
 
-    if not access["allowed"]:
-        return jsonify(
-            {
-                "error": {
-                    "code": "DOCUMENT_NOT_FOUND",
-                    "message": "문서를 찾을 수 없습니다.",
-                }
-            }
-        ), 404
+    # if not access["allowed"]:
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "DOCUMENT_NOT_FOUND",
+    #                 "message": "문서를 찾을 수 없습니다.",
+    #             }
+    #         }
+    #     ), 404
 
     if is_document_blocked(document.id):
         return blocked_response()
 
-    if not can_view_document(current_user, document):
-        return jsonify(
-            {
-                "error": {
-                    "code": "FORBIDDEN",
-                    "message": "문서 접근 권한이 없습니다.",
-                }
-            }
-        ), 403
+    # if not can_view_document(current_user, document):
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "FORBIDDEN",
+    #                 "message": "문서 접근 권한이 없습니다.",
+    #             }
+    #         }
+    #     ), 403
 
     return jsonify(
         {
