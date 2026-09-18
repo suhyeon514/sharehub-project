@@ -185,17 +185,23 @@ def update_document(
 
     if active_block is not None:
         return blocked_response()
+    # ---------------------------------------------------------
+    # VULNERABLE LAB: Permission Escalation
+    #
+    # 취약점:
+    # 문서에 대한 접근 가능 여부(access["allowed"])는 위에서 확인하지만,
+    # PATCH 작업에 필요한 "edit" 권한 수준을 별도로 검증하지 않는다.
+    #
+    # 결과:
+    # view 권한만 가진 공유 사용자도 문서 제목/설명을 수정할 수 있다.
+    #
+    # 정상 구현:
+    # if not has_document_permission(access, "edit"):
+    #     return ..., 403
+    # ---------------------------------------------------------
 
-    if not has_document_permission(access, "edit"):
-        return jsonify(
-            {
-                "error": {
-                    "code": "DOCUMENT_EDIT_FORBIDDEN",
-                    "message": "문서를 수정할 권한이 없습니다.",
-                }
-            }
-        ), 403
-
+    # INTENTIONALLY VULNERABLE:
+    # has_document_permission(access, "edit") 검증 누락
     data = request.get_json(silent=True)
 
     allowed_fields = {"title", "description"}
