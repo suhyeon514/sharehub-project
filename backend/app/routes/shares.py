@@ -75,11 +75,37 @@ def list_shares(document_id, current_user, current_session):
 @shares_bp.post("/<int:document_id>/shares")
 @login_required
 def create_share(document_id, current_user, current_session):
-    document, error = share_document_access(
-        document_id, current_user, "공유를 생성할 권한이 없습니다.", lock=True,
-    )
-    if error is not None:
-        return error
+    # LAB ONLY (BOLA-05): 공유 생성에서만 객체 접근·소유자 권한 거부를 생략.
+    # 정상 버전의 공통 검사 호출은 복구할 수 있도록 주석으로 보존한다.
+    # document, error = share_document_access(
+    #     document_id, current_user, "공유를 생성할 권한이 없습니다.", lock=True,
+    # )
+    # if error is not None:
+    #     return error
+
+    # 공통 검사에서 수행하던 문서 존재 확인과 잠금은 유지한다.
+    document = db.session.execute(
+        db.select(Document)
+        .where(Document.id == document_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if document is None:
+        return jsonify({"error": {
+            "code": "DOCUMENT_NOT_FOUND", "message": "문서를 찾을 수 없습니다.",
+        }}), 404
+
+    # 문서 잠금 이후 locking read로 최신 차단 상태를 확인한다.
+    active_block = db.session.execute(
+        db.select(DocumentBlock.id)
+        .where(
+            DocumentBlock.document_id == document_id,
+            DocumentBlock.status == "blocked",
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if active_block is not None:
+        return blocked_response()
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
