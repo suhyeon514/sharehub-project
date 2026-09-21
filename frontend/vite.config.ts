@@ -13,6 +13,19 @@ export default defineConfig({
   },
 
   server: {
+    // CVE-2026-39364 reproduction lab
+    host: '0.0.0.0',
+
+    fs: {
+      allow: [
+        fileURLToPath(new URL('.', import.meta.url)),
+      ],
+
+      deny: [
+        '**/cve-lab/secret.env',
+      ],
+    },
+
     proxy: {
       '/api': 'http://localhost:8000',
     },
