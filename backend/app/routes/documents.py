@@ -635,28 +635,29 @@ def download_document(
         current_user,
     )
 
-    if not access["allowed"]:
-        return jsonify(
-            {
-                "error": {
-                    "code": "DOCUMENT_NOT_FOUND",
-                    "message": "문서를 찾을 수 없습니다.",
-                }
-            }
-        ), 404
+    # LAB ONLY (BOLA-02): 객체 접근 및 다운로드 권한 거부를 의도적으로 생략.
+    # if not access["allowed"]:
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "DOCUMENT_NOT_FOUND",
+    #                 "message": "문서를 찾을 수 없습니다.",
+    #             }
+    #         }
+    #     ), 404
 
     if is_document_blocked(document.id):
         return blocked_response()
 
-    if not can_download_document(current_user, document):
-        return jsonify(
-            {
-                "error": {
-                    "code": "FORBIDDEN",
-                    "message": "문서를 다운로드할 권한이 없습니다.",
-                }
-            }
-        ), 403
+    # if not can_download_document(current_user, document):
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "FORBIDDEN",
+    #                 "message": "문서를 다운로드할 권한이 없습니다.",
+    #             }
+    #         }
+    #     ), 403
 
     if not os.path.isfile(document.file_path):
         return jsonify(
