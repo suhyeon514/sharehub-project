@@ -162,15 +162,16 @@ def update_document(
         lock_share=True,
     )
 
-    if not access["allowed"]:
-        return jsonify(
-            {
-                "error": {
-                    "code": "DOCUMENT_NOT_FOUND",
-                    "message": "문서를 찾을 수 없습니다.",
-                }
-            }
-        ), 404
+    # LAB ONLY (BOLA-03): 객체 접근 권한 거부를 의도적으로 생략.
+    # if not access["allowed"]:
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "DOCUMENT_NOT_FOUND",
+    #                 "message": "문서를 찾을 수 없습니다.",
+    #             }
+    #         }
+    #     ), 404
 
     # REPEATABLE READ의 오래된 일반 조회가 아니라 locking read로
     # Document 잠금 이후의 활성 차단 상태를 확인한다.
@@ -186,15 +187,16 @@ def update_document(
     if active_block is not None:
         return blocked_response()
 
-    if not has_document_permission(access, "edit"):
-        return jsonify(
-            {
-                "error": {
-                    "code": "DOCUMENT_EDIT_FORBIDDEN",
-                    "message": "문서를 수정할 권한이 없습니다.",
-                }
-            }
-        ), 403
+    # LAB ONLY (BOLA-03): edit 권한 거부를 의도적으로 생략.
+    # if not has_document_permission(access, "edit"):
+    #     return jsonify(
+    #         {
+    #             "error": {
+    #                 "code": "DOCUMENT_EDIT_FORBIDDEN",
+    #                 "message": "문서를 수정할 권한이 없습니다.",
+    #             }
+    #         }
+    #     ), 403
 
     data = request.get_json(silent=True)
 
