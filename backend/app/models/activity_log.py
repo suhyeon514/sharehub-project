@@ -11,8 +11,18 @@ ActivityLog 모델
   AUTHORIZATION_DENIED, DOCUMENT_UPLOAD, DOCUMENT_SHARE,
   COMMENT_CREATED, ADMIN_ACTION
 - 문서 차단·심사 계약에서 추가한 이벤트: DOCUMENT_BLOCK, DOCUMENT_UNBLOCK_REVIEW
+- request_id: 현재는 Flask before_request에서 발급한 g.request_id를 저장한다.
+  Nginx 도입 시 신뢰 프록시가 전달한 값을 검증 후 받는 방식으로 확장한다.
+  detail JSON의 "request_id"(이의신청 ID 등 업무 값)와는 다른 의미다.
 """
+from flask import g, has_app_context
+
 from app.extensions import db
+
+
+def _current_request_id():
+    # 요청 밖(CLI 등)에서 생성된 기록은 NULL로 남긴다.
+    return g.get("request_id") if has_app_context() else None
 
 
 class ActivityLog(db.Model):
@@ -25,8 +35,11 @@ class ActivityLog(db.Model):
     # 문서 19번에 명시된 이벤트 목록 (문자열 저장, 필요 시 Enum으로 전환 가능)
     action_type = db.Column(db.String(50), nullable=False)
 
-    # Nginx -> Flask -> ActivityLog 로 이어지는 요청 추적용 (문서 19번)
-    request_id = db.Column(db.String(64), nullable=True, index=True)
+    # HTTP 요청 로그 -> ActivityLog 요청 추적용 (문서 19번)
+    # 생성 시 값을 넘기지 않으면 현재 요청의 request_id가 자동 저장된다.
+    request_id = db.Column(
+        db.String(64), nullable=True, index=True, default=_current_request_id
+    )
 
     # 이벤트 관련 부가 정보 (예: document_id, 실패 사유 등)
     detail = db.Column(db.Text, nullable=True)

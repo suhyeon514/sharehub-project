@@ -1,3 +1,4 @@
+import logging
 from pprint import pp
 from uuid import uuid4
 
@@ -14,6 +15,9 @@ def create_app(test_config=None):
     if test_config is not None:
         app.config.update(test_config)
 
+    # Flask 로거 기본 레벨은 WARNING이라 비디버그 실행에서 INFO 요청 로그가 누락된다.
+    app.logger.setLevel(logging.INFO)
+
     @app.before_request
     def assign_request_id():
         g.request_id = str(uuid4())
@@ -25,11 +29,12 @@ def create_app(test_config=None):
         response.headers["X-Request-ID"] = request_id
 
         app.logger.info(
-            "http_request request_id=%s method=%s path=%s status=%s",
+            "http_request request_id=%s method=%s path=%s status=%s user_id=%s",
             request_id,
             request.method,
             request.path,
             response.status_code,
+            g.get("current_user_id"),
         )
 
         return response
