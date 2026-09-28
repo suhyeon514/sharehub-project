@@ -15,14 +15,14 @@ ActivityLog 모델
   Nginx 도입 시 신뢰 프록시가 전달한 값을 검증 후 받는 방식으로 확장한다.
   detail JSON의 "request_id"(이의신청 ID 등 업무 값)와는 다른 의미다.
 """
-from flask import g, has_app_context
+from flask import g, has_request_context
 
 from app.extensions import db
 
 
 def _current_request_id():
-    # 요청 밖(CLI 등)에서 생성된 기록은 NULL로 남긴다.
-    return g.get("request_id") if has_app_context() else None
+    # HTTP 요청 밖(CLI 등)에서 생성된 기록은 NULL로 남긴다.
+    return g.get("request_id") if has_request_context() else None
 
 
 class ActivityLog(db.Model):

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from pprint import pp
 from uuid import uuid4
 
@@ -28,8 +29,11 @@ def create_app(test_config=None):
 
         response.headers["X-Request-ID"] = request_id
 
+        timestamp = datetime.now(timezone.utc).isoformat()
+
         app.logger.info(
-            "http_request request_id=%s method=%s path=%s status=%s user_id=%s",
+            "http_request timestamp=%s request_id=%s method=%s path=%s status=%s user_id=%s",
+            timestamp,
             request_id,
             request.method,
             request.path,
