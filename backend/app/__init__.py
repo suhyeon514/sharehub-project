@@ -1,6 +1,7 @@
 from pprint import pp
+from uuid import uuid4
 
-from flask import Flask
+from flask import Flask, g, request
 
 from app.config import Config
 from app.extensions import db, migrate
@@ -9,12 +10,32 @@ from app.extensions import db, migrate
 def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+
     if test_config is not None:
         app.config.update(test_config)
 
+    @app.before_request
+    def assign_request_id():
+        g.request_id = str(uuid4())
+
+    @app.after_request
+    def log_request_and_add_request_id(response):
+        request_id = g.get("request_id")
+
+        response.headers["X-Request-ID"] = request_id
+
+        app.logger.info(
+            "http_request request_id=%s method=%s path=%s status=%s",
+            request_id,
+            request.method,
+            request.path,
+            response.status_code,
+        )
+
+        return response
+
     db.init_app(app)
     migrate.init_app(app, db)
-
     # 모델을 Migration이 인식하도록 import
     from app import models  # noqa: F401
 

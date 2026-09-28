@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from werkzeug.security import check_password_hash
 
 from app.extensions import db
@@ -181,6 +181,8 @@ def login_required(view):
                     "message": "사용자 정보를 찾을 수 없습니다."
                 }
             ), 401
+
+        g.current_user_id = user.id
 
         return view(
             *args,
