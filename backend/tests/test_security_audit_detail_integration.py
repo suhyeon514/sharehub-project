@@ -5,12 +5,14 @@ Capture checks do not prove default stream output; a separate check does.
 This first-stage file does not verify the full authorization matrix.
 """
 import json
+from contextlib import ExitStack
 import logging
 from pathlib import Path
 import secrets
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -29,11 +31,13 @@ def probe(mode):
     from app.extensions import db
     from app.models import Document, Session, User
 
-    app = create_app({"TESTING": True, "DEBUG": False,
+    app = create_app({"TESTING": True, "DEBUG": False, "PROPAGATE_EXCEPTIONS": False,
                       "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:"})
     audit = logging.getLogger("sharehub.security_audit")
-    capture, http = Capture(), Capture()
-    if mode == "capture":
+    capture, http, errors = Capture(), Capture(), Capture()
+    error_logger = logging.getLogger("sharehub.security_audit.error")
+    error_logger.addHandler(errors)
+    if mode != "stream":
         audit.addHandler(capture)
     app.logger.addHandler(http)
     token = secrets.token_urlsafe(32)
@@ -52,16 +56,45 @@ def probe(mode):
             db.session.commit()
             document_id, owner_id = document.id, owner.id
         external_id = str(uuid.uuid4())
-        response = app.test_client().get(f"/api/documents/{document_id}", headers={
-            "Authorization": f"Bearer {token}", "X-Request-ID": external_id,
-        })
+        with ExitStack() as stack:
+            injected = None
+            if mode == "document_lookup_failure":
+                original_get = db.session.get
+
+                def fail_document_only(model, *args, **kwargs):
+                    if model is Document:
+                        from sqlalchemy.exc import SQLAlchemyError
+                        raise SQLAlchemyError("isolated document lookup failure")
+                    return original_get(model, *args, **kwargs)
+
+                injected = stack.enter_context(patch.object(db.session, "get", side_effect=fail_document_only))
+            elif mode == "authorization_failure":
+                injected = stack.enter_context(patch("app.routes.documents.get_document_access",
+                    side_effect=RuntimeError("isolated authorization failure")))
+            elif mode == "serialization_failure":
+                injected = stack.enter_context(patch("app.routes.documents.serialize_document_detail",
+                    side_effect=RuntimeError("isolated response serialization failure")))
+            elif mode == "audit_output_failure":
+                injected = stack.enter_context(patch.object(audit, "info",
+                    side_effect=OSError("isolated audit output failure")))
+            elif mode == "audit_construction_failure":
+                clock = stack.enter_context(patch("app.services.security_audit.datetime"))
+                clock.now.side_effect = RuntimeError("isolated audit construction failure")
+                injected = clock.now
+            response = app.test_client().get(f"/api/documents/{document_id}", headers={
+                "Authorization": f"Bearer {token}", "X-Request-ID": external_id,
+            })
+            injection_calls = injected.call_count if injected is not None else 0
         return {"status": response.status_code, "request_id": response.headers.get("X-Request-ID"),
                 "external_id": external_id, "owner_id": owner_id, "document_id": document_id,
-                "audit": capture.messages, "http": http.messages,
-                "secret_leaked": any(token in message for message in capture.messages)}
+                "audit": capture.messages, "http": http.messages, "errors": errors.messages,
+                "injection_calls": injection_calls,
+                "response_has_document": response.is_json and "data" in response.json,
+                "secret_leaked": any(token in message for message in capture.messages + errors.messages)}
     finally:
-        if mode == "capture":
+        if mode != "stream":
             audit.removeHandler(capture)
+        error_logger.removeHandler(errors)
         app.logger.removeHandler(http)
         with app.app_context():
             db.session.remove()
@@ -109,6 +142,60 @@ class SecurityAuditDetailIntegrationTests(unittest.TestCase):
         self.assertEqual(len(http), 1)
         self.assertIn(f"request_id={event['request_id']}", http[0])
         self.assertIn("status=200", http[0])
+
+    def check_failure_tracking(self, data, status):
+        self.assertGreater(data["injection_calls"], 0)
+        self.assertEqual(data["status"], status)
+        self.assertEqual(uuid.UUID(data["request_id"]).version, 4)
+        self.assertNotEqual(data["request_id"], data["external_id"])
+        self.assertFalse(data["secret_leaked"])
+        http = [line for line in data["http"] if line.startswith("http_request ")]
+        self.assertEqual(len(http), 1)
+        self.assertIn(f"request_id={data['request_id']}", http[0])
+        self.assertIn(f"status={status}", http[0])
+
+    def check_incomplete(self, mode):
+        data, process = self.run_probe(mode)
+        self.check_failure_tracking(data, 500)
+        self.assertEqual(data["audit"], [])
+        self.assertEqual(self.standard_stream_events(process), [])
+        self.assertEqual(len(data["errors"]), 1)
+        self.assertIn("audit_incomplete", data["errors"][0])
+        self.assertIn(f"request_id={data['request_id']}", data["errors"][0])
+        self.assertNotIn("DOCUMENT_NOT_FOUND", data["errors"][0])
+
+    def test_document_lookup_exception_is_incomplete(self):
+        self.check_incomplete("document_lookup_failure")
+
+    def test_authorization_exception_is_incomplete(self):
+        self.check_incomplete("authorization_failure")
+
+    def test_response_failure_preserves_completed_allow_decision(self):
+        data, _ = self.run_probe("serialization_failure")
+        self.check_failure_tracking(data, 500)
+        self.assertEqual(len(data["audit"]), 1)
+        event = json.loads(data["audit"][0])
+        self.assertEqual(event["authorization"]["decision"], "allow")
+        self.assertEqual(event["authorization"]["reason_code"], "DOCUMENT_OWNER_ACCESS")
+        self.assertEqual(event["result"], {"outcome": "failure", "http_status": 500})
+        self.assertEqual(event["request_id"], data["request_id"])
+        self.assertEqual(data["errors"], [])
+
+    def check_audit_failure_preserves_response(self, mode):
+        data, process = self.run_probe(mode)
+        self.check_failure_tracking(data, 200)
+        self.assertTrue(data["response_has_document"])
+        self.assertEqual(data["audit"], [])
+        self.assertEqual(self.standard_stream_events(process), [])
+        self.assertEqual(len(data["errors"]), 1)
+        self.assertIn(f"request_id={data['request_id']}", data["errors"][0])
+        self.assertNotIn("audit_incomplete", data["errors"][0])
+
+    def test_audit_output_exception_preserves_success_response(self):
+        self.check_audit_failure_preserves_response("audit_output_failure")
+
+    def test_audit_construction_exception_preserves_success_response(self):
+        self.check_audit_failure_preserves_response("audit_construction_failure")
 
     def test_owner_detail_contract_without_enabling_info(self):
         data, _ = self.run_probe("capture")

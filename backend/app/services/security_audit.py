@@ -57,44 +57,99 @@ def evaluated(access, reason, decision):
 def allowed_code(access):
     return ALLOW_CODES[(access["source"], access["permission"])]
 
-def emit_detail(response):
-    state = g.get("security_detail")
-    if state is None or state["emitted"]:
-        return
-    state["emitted"] = True
-    if (
-        state["reason"] is None
-        or state["event_type"] is None
-    ):
-        ERROR_LOGGER.error("audit_incomplete request_id=%s", g.get("request_id"))
-        return
-    event = {
-        "schema_version": 1,
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
-        "request_id": g.request_id,
-        "event_type": state["event_type"],
-        "actor": {"user_id": state["user_id"]},
-        "resource": {"type": "document", "id": state["document_id"]},
-        "action": "view",
-        "authorization": {
-            "evaluated": state["evaluated"], "required_permission": "view",
-            "access_source": state["source"],
-            "effective_permission": state["permission"],
-            "decision": state["decision"], "reason_code": state["reason"],
-        },
-        "result": {
-            "outcome": "success" if response.status_code < 400 else "failure",
-            "http_status": response.status_code,
-        },
-    }
+def _safe_error_log(message, *args):
+    """Best-effort error logging; never interrupt API responses."""
     try:
-        AUDIT_LOGGER.info(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+        ERROR_LOGGER.error(message, *args)
+    except Exception:
+        pass
+
+def _safe_request_id():
+    """Read request_id without propagating Flask context errors."""
+    try:
+        return g.get("request_id")
+    except Exception:
+        return None
+
+
+def emit_detail(response):
+    """Emit one audit event without changing the original API response."""
+    try:
+        state = g.get("security_detail")
+
+        if state is None:
+            return
+
+        if state["emitted"]:
+            return
+
+        # Mark the request as handled before any logging attempt.
+        state["emitted"] = True
+
+        # No final authentication, lookup, or authorization result.
+        if state["reason"] is None or state["event_type"] is None:
+            _safe_error_log(
+                "audit_incomplete request_id=%s",
+                g.get("request_id"),
+            )
+            return
+
+        event = {
+            "schema_version": 1,
+            "timestamp": datetime.now(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
+            "request_id": g.request_id,
+            "event_type": state["event_type"],
+            "actor": {
+                "user_id": state["user_id"],
+            },
+            "resource": {
+                "type": "document",
+                "id": state["document_id"],
+            },
+            "action": "view",
+            "authorization": {
+                "evaluated": state["evaluated"],
+                "required_permission": "view",
+                "access_source": state["source"],
+                "effective_permission": state["permission"],
+                "decision": state["decision"],
+                "reason_code": state["reason"],
+            },
+            "result": {
+                "outcome": (
+                    "success"
+                    if response.status_code < 400
+                    else "failure"
+                ),
+                "http_status": response.status_code,
+            },
+        }
+
+        payload = json.dumps(
+            event,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        AUDIT_LOGGER.info(payload)
+
     except Exception as exc:
-        try:
-            ERROR_LOGGER.error("audit_emit_failed request_id=%s failure_type=%s",
-                               g.get("request_id"), type(exc).__name__)
-        except Exception:
-            pass
+        _safe_error_log(
+            "audit_emit_failed request_id=%s failure_type=%s",
+            _safe_request_id(),
+            type(exc).__name__,
+        )
+
+
+def _has_request_context_safe():
+    """Return whether a Flask request context is active."""
+    try:
+        from flask import has_request_context
+        return has_request_context()
+    except Exception:
+        return False
 
 def configure_audit_logger():
     """Configure security audit loggers once per process."""
