@@ -1,6 +1,7 @@
 """Security Audit Event v1.0: document-detail only."""
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from flask import g
 
@@ -76,3 +77,19 @@ def emit_detail(response):
                                g.get("request_id"), type(exc).__name__)
         except Exception:
             pass
+
+def configure_audit_logger():
+    """Configure security audit loggers once per process."""
+    for logger in (AUDIT_LOGGER, ERROR_LOGGER):
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        if not any(
+            getattr(handler, "_sharehub_audit_handler", False)
+            for handler in logger.handlers
+        ):
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            handler._sharehub_audit_handler = True
+            logger.addHandler(handler)

@@ -4,7 +4,11 @@ from pprint import pp
 from uuid import uuid4
 
 from flask import Flask, g, request
-from app.services.security_audit import initialize_detail, emit_detail
+from app.services.security_audit import (
+    configure_audit_logger,
+    initialize_detail,
+    emit_detail,
+)
 
 from app.config import Config
 from app.extensions import db, migrate
@@ -13,6 +17,8 @@ from app.extensions import db, migrate
 def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+
+    configure_audit_logger()
 
     if test_config is not None:
         app.config.update(test_config)
