@@ -203,6 +203,16 @@ class SecurityAuditContractTests(unittest.TestCase):
         event["result"] = {"outcome": "failure", "http_status": 403}
         self.assert_invalid(event)
 
+    def test_document_id_zero_is_valid(self):
+        event = valid_event()
+        event["resource"]["id"] = 0
+        self.assertTrue(validate_event(event))
+
+    def test_negative_document_id_is_invalid(self):
+        event = valid_event()
+        event["resource"]["id"] = -1
+        self.assert_invalid(event)
+
 
 if __name__ == "__main__":
     unittest.main()

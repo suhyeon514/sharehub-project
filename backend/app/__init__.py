@@ -29,12 +29,16 @@ def create_app(test_config=None):
     @app.before_request
     def assign_request_id():
         g.request_id = str(uuid4())
-        # Only the document-detail GET is included in v1 scope.
-        if request.method == "GET":
-            import re
-            match = re.fullmatch(r"/api/documents/([0-9]+)", request.path)
-            if match and int(match.group(1)) > 0:
-                initialize_detail(int(match.group(1)))
+
+        # Security Audit v1.0: document-detail GET only.
+        if (
+            request.method == "GET"
+            and request.endpoint == "documents.get_document_detail"
+        ):
+            document_id = (request.view_args or {}).get("document_id")
+
+            if type(document_id) is int:
+                initialize_detail(document_id)
 
     @app.after_request
     def log_request_and_add_request_id(response):

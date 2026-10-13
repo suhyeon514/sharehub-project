@@ -92,7 +92,7 @@ def validate_event(event):
 
     require(event["action"] == "view", "invalid detail action")
     require(resource["type"] == "document", "invalid resource type")
-    require(type(resource["id"]) is int and resource["id"] > 0,
+    require(type(resource["id"]) is int and resource["id"] >= 0,
             "invalid document id")
     require(actor["user_id"] is None or
             (type(actor["user_id"]) is int and actor["user_id"] > 0),
