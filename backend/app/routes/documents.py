@@ -22,6 +22,7 @@ from app.services.document_blocks import (
     blocked_response,
 )
 from app.services.file_cleanup import process_cleanup_job_safely
+from app.services.security_audit import authenticated, evaluated, allowed_code
 
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/api/documents")
@@ -557,6 +558,7 @@ def get_document_detail(
     current_user,
     current_session,
 ):
+    authenticated(current_user.id)
     document = db.session.get(
         Document,
         document_id,
@@ -579,6 +581,7 @@ def get_document_detail(
 
 
     if not access["allowed"]:
+        evaluated(access, "NO_DOCUMENT_ACCESS", "deny")
         return jsonify(
             {
                 "error": {
@@ -589,9 +592,11 @@ def get_document_detail(
         ), 404
 
     if is_document_blocked(document.id):
+        evaluated(access, "DOCUMENT_ACCESS_BLOCKED", "deny")
         return blocked_response()
 
     if not can_view_document(current_user, document):
+        evaluated(access, "INSUFFICIENT_DOCUMENT_PERMISSION", "deny")
         return jsonify(
             {
                 "error": {
@@ -601,6 +606,7 @@ def get_document_detail(
             }
         ), 403
 
+    evaluated(access, allowed_code(access), "allow")
     return jsonify(
         {
             "data": serialize_document_detail(

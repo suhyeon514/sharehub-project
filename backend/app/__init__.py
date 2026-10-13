@@ -4,6 +4,7 @@ from pprint import pp
 from uuid import uuid4
 
 from flask import Flask, g, request
+from app.services.security_audit import initialize_detail, emit_detail
 
 from app.config import Config
 from app.extensions import db, migrate
@@ -22,12 +23,19 @@ def create_app(test_config=None):
     @app.before_request
     def assign_request_id():
         g.request_id = str(uuid4())
+        # Only the document-detail GET is included in v1 scope.
+        if request.method == "GET":
+            import re
+            match = re.fullmatch(r"/api/documents/([0-9]+)", request.path)
+            if match and int(match.group(1)) > 0:
+                initialize_detail(int(match.group(1)))
 
     @app.after_request
     def log_request_and_add_request_id(response):
         request_id = g.get("request_id")
 
         response.headers["X-Request-ID"] = request_id
+        emit_detail(response)
 
         timestamp = datetime.now(timezone.utc).isoformat()
 
