@@ -17,17 +17,34 @@ ALLOW_CODES = {
 
 def initialize_detail(document_id):
     g.security_detail = {
-        "document_id": document_id, "user_id": None,
-        "evaluated": False, "source": None, "permission": None,
+        "document_id": document_id,
+        "user_id": None,
+        "evaluated": False,
+        "source": None,
+        "permission": None,
         "decision": "not_evaluated",
-        "reason": "AUTHENTICATION_REQUIRED",
-        "event_type": "authentication", "emitted": False,
+        "reason": None,
+        "event_type": None,
+        "emitted": False,
     }
+
+
+def authentication_failed():
+    state = g.get("security_detail")
+    if state is not None:
+        state["reason"] = "AUTHENTICATION_REQUIRED"
+        state["event_type"] = "authentication"
+
 
 def authenticated(user_id):
     state = g.get("security_detail")
     if state is not None:
         state["user_id"] = user_id
+
+
+def document_not_found():
+    state = g.get("security_detail")
+    if state is not None:
         state["reason"] = "DOCUMENT_NOT_FOUND"
         state["event_type"] = "document.lookup"
 
@@ -45,8 +62,9 @@ def emit_detail(response):
     if state is None or state["emitted"]:
         return
     state["emitted"] = True
-    if state["decision"] == "not_evaluated" and state["reason"] not in (
-        "AUTHENTICATION_REQUIRED", "DOCUMENT_NOT_FOUND"
+    if (
+        state["reason"] is None
+        or state["event_type"] is None
     ):
         ERROR_LOGGER.error("audit_incomplete request_id=%s", g.get("request_id"))
         return

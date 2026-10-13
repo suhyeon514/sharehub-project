@@ -22,7 +22,12 @@ from app.services.document_blocks import (
     blocked_response,
 )
 from app.services.file_cleanup import process_cleanup_job_safely
-from app.services.security_audit import authenticated, evaluated, allowed_code
+from app.services.security_audit import (
+    authenticated,
+    document_not_found,
+    evaluated,
+    allowed_code,
+)
 
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/api/documents")
@@ -565,6 +570,7 @@ def get_document_detail(
     )
 
     if document is None:
+        document_not_found()
         return jsonify(
             {
                 "error": {

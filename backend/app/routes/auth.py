@@ -7,7 +7,7 @@ from werkzeug.security import check_password_hash
 
 from app.extensions import db
 from app.models import Session, User
-
+from app.services.security_audit import authentication_failed
 
 auth_bp = Blueprint(
     "auth",
@@ -130,6 +130,7 @@ def login_required(view):
         token = get_bearer_token()
 
         if not token:
+            authentication_failed()
             return jsonify(
                 {
                     "message": "인증이 필요합니다."
@@ -142,6 +143,7 @@ def login_required(view):
         ).first()
 
         if session is None:
+            authentication_failed()
             return jsonify(
                 {
                     "message": "유효하지 않은 세션입니다."
@@ -160,7 +162,7 @@ def login_required(view):
         if expires_at <= now:
             session.is_active = False
             db.session.commit()
-
+            authentication_failed()
             return jsonify(
                 {
                     "message": "세션이 만료되었습니다."
@@ -175,7 +177,7 @@ def login_required(view):
         if user is None:
             session.is_active = False
             db.session.commit()
-
+            authentication_failed()
             return jsonify(
                 {
                     "message": "사용자 정보를 찾을 수 없습니다."
