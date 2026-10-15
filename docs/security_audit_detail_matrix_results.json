@@ -1,0 +1,147 @@
+{
+  "base_commit": "74bb069",
+  "scope": "isolated SQLite / Flask test client; uncommitted integration test expansion",
+  "total": 34,
+  "tests": [
+    {
+      "test": "test_audit_construction_exception_preserves_success_response",
+      "result": "ok"
+    },
+    {
+      "test": "test_audit_output_exception_preserves_success_response",
+      "result": "ok"
+    },
+    {
+      "test": "test_authorization_exception_is_incomplete",
+      "result": "ok"
+    },
+    {
+      "test": "test_document_lookup_exception_is_incomplete",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_admin_private",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_auth_expired",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_auth_invalid",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_auth_none",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_admin_private",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_owner",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_share_download",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_share_edit",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_share_view",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_team",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_blocked_unrelated",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_missing_document",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_no_access",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_owner",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_private_same_team",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_share_download",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_share_edit",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_share_view",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_actor_null",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_both_null",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_document_null",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_other_department",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_share_download",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_share_edit",
+      "result": "ok"
+    },
+    {
+      "test": "test_matrix_team_share_view",
+      "result": "ok"
+    },
+    {
+      "test": "test_owner_detail_contract_on_default_standard_stream",
+      "result": "ok"
+    },
+    {
+      "test": "test_owner_detail_contract_without_enabling_info",
+      "result": "ok"
+    },
+    {
+      "test": "test_owner_detail_output_on_default_standard_stream",
+      "result": "ok"
+    },
+    {
+      "test": "test_response_failure_preserves_completed_allow_decision",
+      "result": "ok"
+    }
+  ],
+  "full_suite": {
+    "tests": 143,
+    "result": "OK"
+  }
+}

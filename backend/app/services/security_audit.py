@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from flask import g
+from app.services.security_audit_contract import validate_event
 
 AUDIT_LOGGER = logging.getLogger("sharehub.security_audit")
 ERROR_LOGGER = logging.getLogger("sharehub.security_audit.error")
@@ -126,6 +127,7 @@ def emit_detail(response):
                 "http_status": response.status_code,
             },
         }
+        validate_event(event)
 
         payload = json.dumps(
             event,
